@@ -27,6 +27,10 @@ extension Color {
   }
 
   static func isMonochrome(_ id: String) -> Bool { id == "codex" || id == "cursor" }
+
+  /// Brands whose Default-style app icon is a flat white tile with a black mark, as ChatGPT in
+  /// the Dock. Their tile only turns black under the Dark icon style.
+  static func hasLightTile(_ id: String) -> Bool { id == "codex" }
 }
 
 /// Small coloured status label used in the Settings connection section.

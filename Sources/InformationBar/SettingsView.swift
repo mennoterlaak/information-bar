@@ -187,6 +187,8 @@ struct IconTile: View {
         let top = CGPoint.zero
         let bottom = CGPoint(x: 0, y: rect.maxY)
         switch style {
+        case .standard where lightTile:
+          context.fill(path, with: .color(.white))
         case .standard:
           context.fill(
             path,
@@ -221,6 +223,7 @@ struct IconTile: View {
         // Settings keeps almost flat.
         let sheen: Double
         switch style {
+        case .standard where lightTile: sheen = 0
         case .standard, .tintedLight: sheen = 0.14
         case .dark, .tintedDark: sheen = 0.04
         case .clearLight: sheen = 0.3
@@ -238,7 +241,7 @@ struct IconTile: View {
         // Faint rim just inside the edge.
         context.stroke(
           shape.path(in: rect.insetBy(dx: 0.5, dy: 0.5)),
-          with: .color(.white.opacity(style == .dark || style == .tintedDark ? 0.1 : 0.16)),
+          with: .color(rimColor(style)),
           lineWidth: 1)
         // The mark, tinted for the style and centred.
         var mark = context.resolve(glyphImage(style))
@@ -267,8 +270,23 @@ struct IconTile: View {
     return false
   }
 
+  /// White tile with a black mark under the Default style, as ChatGPT's Dock icon.
+  private var lightTile: Bool {
+    if case .provider(let id) = glyph { return Color.hasLightTile(id) }
+    return false
+  }
+
+  private func rimColor(_ style: IconStyle) -> Color {
+    switch style {
+    case .standard where lightTile: return .black.opacity(0.1)
+    case .dark, .tintedDark: return .white.opacity(0.1)
+    default: return .white.opacity(0.16)
+    }
+  }
+
   private func glyphColor(_ style: IconStyle) -> Color {
     switch style {
+    case .standard where lightTile: return .black
     case .standard, .clearLight, .clearDark, .tintedLight: return .white
     case .dark: return monochrome ? .white : color
     case .tintedDark: return .accentColor
