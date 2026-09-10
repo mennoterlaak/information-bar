@@ -47,8 +47,29 @@ struct RenderViews {
         }
       }
       store.setGaugeStyle(.ring)
+      // Every icon style value macOS writes, as the tiles draw it in this appearance.
+      let themes = [
+        "Regular", "RegularDark", "RegularAutomatic", "ClearLight", "ClearDark",
+        "ClearAutomatic", "TintedLight", "TintedDark", "TintedAutomatic",
+      ]
+      try save(
+        VStack(alignment: .leading, spacing: 10) {
+          ForEach(themes, id: \.self) { theme in
+            HStack(spacing: 12) {
+              Text(theme).font(.system(size: 12, design: .monospaced))
+                .frame(width: 150, alignment: .leading)
+              IconTile(symbol: "gearshape", color: .gray, size: 28, theme: theme)
+              ForEach(ProviderCategory.allCases) { category in
+                IconTile(id: category.rawValue, size: 28, theme: theme)
+              }
+            }
+          }
+        }
+        .padding(20).background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, scheme),
+        to: output.appendingPathComponent("icon-styles-\(label).png"))
     }
-    print("Rendered 20 QA images with synthetic data to \(output.path)")
+    print("Rendered 22 QA images with synthetic data to \(output.path)")
   }
 
   @MainActor

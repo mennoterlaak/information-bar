@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import InformationBar
@@ -245,6 +246,24 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(item.text(for: MenuElement(.hourly), preferences: options), "$0.90/h")
     options.earningsView = .both
     XCTAssertEqual(item.text(for: MenuElement(.hourly), preferences: options), "$1.00/h")
+  }
+
+  func testIconStyleValuesMatchWhatMacOSWrites() {
+    // Values observed from System Settings; Automatic follows the appearance, anything else
+    // is drawn as Default, as macOS does for app icons.
+    XCTAssertEqual(IconStyle.resolve("Regular", for: .dark), .standard)
+    XCTAssertEqual(IconStyle.resolve("RegularDark", for: .light), .dark)
+    XCTAssertEqual(IconStyle.resolve("RegularAutomatic", for: .light), .standard)
+    XCTAssertEqual(IconStyle.resolve("RegularAutomatic", for: .dark), .dark)
+    XCTAssertEqual(IconStyle.resolve("ClearLight", for: .dark), .clearLight)
+    XCTAssertEqual(IconStyle.resolve("ClearDark", for: .light), .clearDark)
+    XCTAssertEqual(IconStyle.resolve("ClearAutomatic", for: .light), .clearLight)
+    XCTAssertEqual(IconStyle.resolve("TintedLight", for: .dark), .tintedLight)
+    XCTAssertEqual(IconStyle.resolve("TintedDark", for: .light), .tintedDark)
+    XCTAssertEqual(IconStyle.resolve("TintedAutomatic", for: .dark), .tintedDark)
+    for fallback in ["Clear", "Tinted", "Dark", "RegularLight", "Bogus", ""] {
+      XCTAssertEqual(IconStyle.resolve(fallback, for: .dark), .standard, fallback)
+    }
   }
 
   func testMoneyFormatsInTheDisplayCurrency() {

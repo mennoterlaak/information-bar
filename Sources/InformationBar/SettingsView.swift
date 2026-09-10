@@ -102,19 +102,32 @@ func sectionHeader(_ title: String, info: String) -> some View {
   }
 }
 
-/// The system's icon style from System Settings, Appearance: default, dark, clear or tinted.
-enum IconStyle {
-  case standard, dark, clear, tinted
+/// The system icon style from System Settings, Appearance. macOS stores it as a base plus a
+/// mode: Regular, RegularDark, RegularAutomatic, ClearLight, ClearDark, ClearAutomatic,
+/// TintedLight, TintedDark, TintedAutomatic. Anything else is drawn as Default, and Automatic
+/// follows the current appearance, matching how macOS renders app icons for each value.
+enum IconStyle: Equatable {
+  case standard, dark, clearLight, clearDark, tintedLight, tintedDark
 
-  /// Resolves the `AppleIconAppearanceTheme` value; automatic variants follow the appearance.
   static func resolve(_ theme: String, for scheme: ColorScheme) -> IconStyle {
-    let automatic = theme.localizedCaseInsensitiveContains("auto")
-    let applies = !automatic || scheme == .dark
-    if theme.contains("Clear") { return .clear }
-    if theme.contains("Tinted") { return applies ? .tinted : .standard }
-    if theme.contains("Dark") { return applies ? .dark : .standard }
-    return .standard
+    let darkMode: Bool
+    if theme.hasSuffix("Dark") {
+      darkMode = true
+    } else if theme.hasSuffix("Automatic") {
+      darkMode = scheme == .dark
+    } else {
+      darkMode = false
+    }
+    switch theme {
+    case "ClearLight", "ClearDark", "ClearAutomatic": return darkMode ? .clearDark : .clearLight
+    case "TintedLight", "TintedDark", "TintedAutomatic":
+      return darkMode ? .tintedDark : .tintedLight
+    case "RegularDark", "RegularAutomatic": return darkMode ? .dark : .standard
+    default: return .standard
+    }
   }
+
+  var isGlass: Bool { self == .clearLight || self == .clearDark }
 }
 
 /// Icon-canvas tile painted with Canvas in the system icon style: continuous corners, the
@@ -164,44 +177,54 @@ struct IconTile: View {
     let style = IconStyle.resolve(theme, for: scheme)
     let shape = RoundedRectangle(cornerRadius: size * 0.2237, style: .continuous)
     ZStack {
-      if style == .clear {
+      if style.isGlass {
         shape.fill(.clear).glassEffect(.regular, in: shape)
       }
       Canvas { context, canvasSize in
         let rect = CGRect(origin: .zero, size: canvasSize)
         let path = shape.path(in: rect)
         context.clip(to: path)
+        let top = CGPoint.zero
+        let bottom = CGPoint(x: 0, y: rect.maxY)
         switch style {
         case .standard:
           context.fill(
             path,
             with: .linearGradient(
               Gradient(colors: [color.opacity(0.85), color, color.opacity(0.92)]),
-              startPoint: .zero, endPoint: CGPoint(x: 0, y: rect.maxY)))
+              startPoint: top, endPoint: bottom))
         case .dark:
           context.fill(
             path,
             with: .linearGradient(
-              Gradient(colors: [Color(white: 0.13), Color(white: 0.09)]),
-              startPoint: .zero, endPoint: CGPoint(x: 0, y: rect.maxY)))
-        case .tinted:
+              Gradient(colors: [Color(white: 0.13), Color(white: 0.09)]), startPoint: top,
+              endPoint: bottom))
+        case .clearLight:
+          context.fill(path, with: .color(Color(white: 0.5).opacity(0.6)))
+        case .clearDark:
+          context.fill(path, with: .color(Color(white: 0.12).opacity(0.85)))
+        case .tintedLight:
+          context.fill(
+            path,
+            with: .linearGradient(
+              Gradient(colors: [Color.accentColor.opacity(0.9), Color.accentColor]),
+              startPoint: top, endPoint: bottom))
+        case .tintedDark:
           context.fill(path, with: .color(Color(white: 0.1)))
           context.fill(
             path,
             with: .linearGradient(
-              Gradient(colors: [Color.accentColor.opacity(0.55), Color.accentColor.opacity(0.25)]),
-              startPoint: .zero, endPoint: CGPoint(x: 0, y: rect.maxY)))
-        case .clear:
-          break
+              Gradient(colors: [Color.accentColor.opacity(0.35), Color.accentColor.opacity(0.15)]),
+              startPoint: top, endPoint: bottom))
         }
-        // A soft sheen below the top edge; barely there on the dark canvas, which System
+        // A soft sheen below the top edge; barely there on dark canvases, which System
         // Settings keeps almost flat.
         let sheen: Double
         switch style {
-        case .standard: sheen = 0.14
-        case .dark: sheen = 0.04
-        case .clear: sheen = 0.3
-        case .tinted: sheen = 0.1
+        case .standard, .tintedLight: sheen = 0.14
+        case .dark, .tintedDark: sheen = 0.04
+        case .clearLight: sheen = 0.3
+        case .clearDark: sheen = 0.12
         }
         let highlight = Path(
           ellipseIn: CGRect(
@@ -215,7 +238,8 @@ struct IconTile: View {
         // Faint rim just inside the edge.
         context.stroke(
           shape.path(in: rect.insetBy(dx: 0.5, dy: 0.5)),
-          with: .color(.white.opacity(style == .dark ? 0.1 : 0.16)), lineWidth: 1)
+          with: .color(.white.opacity(style == .dark || style == .tintedDark ? 0.1 : 0.16)),
+          lineWidth: 1)
         // The mark, tinted for the style and centred.
         var mark = context.resolve(glyphImage(style))
         mark.shading = .color(glyphColor(style))
@@ -237,7 +261,7 @@ struct IconTile: View {
     .frame(width: size, height: size)
   }
 
-  /// Monochrome brands get a white mark on the dark canvas; coloured brands keep their colour.
+  /// Black-on-white brands keep a white mark on dark tiles; coloured brands keep their colour.
   private var monochrome: Bool {
     if case .provider(let id) = glyph { return Color.isMonochrome(id) }
     return false
@@ -245,10 +269,9 @@ struct IconTile: View {
 
   private func glyphColor(_ style: IconStyle) -> Color {
     switch style {
-    case .standard: return .white
+    case .standard, .clearLight, .clearDark, .tintedLight: return .white
     case .dark: return monochrome ? .white : color
-    case .clear: return .primary
-    case .tinted: return .accentColor
+    case .tintedDark: return .accentColor
     }
   }
 }
