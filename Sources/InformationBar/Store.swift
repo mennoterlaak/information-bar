@@ -122,6 +122,12 @@ enum Collector {
   }
 }
 
+extension UserDefaults {
+  /// The system icon style chosen in System Settings, Appearance; a global-domain key that
+  /// key-value observation reports even when another process changes it.
+  @objc dynamic var AppleIconAppearanceTheme: String? { string(forKey: "AppleIconAppearanceTheme") }
+}
+
 @MainActor
 final class DashboardStore: ObservableObject {
   @Published var providers = Dictionary(
@@ -141,6 +147,9 @@ final class DashboardStore: ObservableObject {
   @Published var tick = Date()
   /// Synthetic data only: no collector runs, no Keychain reads.
   var demo = false
+  /// Current system icon style, published so tiles redraw the moment it changes.
+  @Published var iconTheme = UserDefaults.standard.AppleIconAppearanceTheme ?? "Regular"
+  private var iconThemeObservation: NSKeyValueObservation?
   var onUpdate: (() -> Void)?
   private var timer: Timer?
   private var lastRefresh = Date.distantPast
@@ -151,6 +160,12 @@ final class DashboardStore: ObservableObject {
     self.defaults = defaults
     preferences = .load(from: defaults)
     Freshness.refreshInterval = preferences.refreshInterval
+    iconThemeObservation = UserDefaults.standard.observe(
+      \.AppleIconAppearanceTheme, options: [.new]
+    ) { [weak self] _, change in
+      let theme = change.newValue.flatMap { $0 } ?? "Regular"
+      Task { @MainActor in self?.iconTheme = theme }
+    }
   }
 
   func update(_ category: ProviderCategory, _ change: (inout ProviderPreferences) -> Void) {

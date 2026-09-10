@@ -14,7 +14,7 @@ struct SettingsView: View {
     NavigationSplitView {
       List(selection: selection) {
         HStack(spacing: 8) {
-          IconTile(symbol: "gearshape", color: .gray)
+          IconTile(symbol: "gearshape", color: .gray, theme: store.iconTheme)
           Text("General")
         }.tag("global")
         Section {
@@ -44,7 +44,7 @@ struct SettingsView: View {
   private func sidebarRow(_ category: ProviderCategory) -> some View {
     let enabled = store.preferences.provider(category).enabled
     return HStack(spacing: 8) {
-      IconTile(id: category.rawValue)
+      IconTile(id: category.rawValue, theme: store.iconTheme)
       Text(category.name)
       Spacer()
       Circle().fill(enabled ? Color.green : Color.secondary.opacity(0.3))
@@ -106,10 +106,8 @@ func sectionHeader(_ title: String, info: String) -> some View {
 enum IconStyle {
   case standard, dark, clear, tinted
 
-  /// Reads `AppleIconAppearanceTheme` from the global domain; automatic variants follow the
-  /// current appearance.
-  static func current(for scheme: ColorScheme) -> IconStyle {
-    let theme = UserDefaults.standard.string(forKey: "AppleIconAppearanceTheme") ?? "Regular"
+  /// Resolves the `AppleIconAppearanceTheme` value; automatic variants follow the appearance.
+  static func resolve(_ theme: String, for scheme: ColorScheme) -> IconStyle {
     let automatic = theme.localizedCaseInsensitiveContains("auto")
     let applies = !automatic || scheme == .dark
     if theme.contains("Clear") { return .clear }
@@ -128,16 +126,20 @@ struct IconTile: View {
   }
   let glyph: Glyph
   var size: CGFloat = 22
+  /// System icon style value; passed in so a change re-renders the tile at once.
+  var theme = UserDefaults.standard.AppleIconAppearanceTheme ?? "Regular"
   @Environment(\.colorScheme) private var scheme
 
-  init(id: String, size: CGFloat = 22) {
+  init(id: String, size: CGFloat = 22, theme: String? = nil) {
     glyph = .provider(id)
     self.size = size
+    if let theme { self.theme = theme }
   }
 
-  init(symbol: String, color: Color, size: CGFloat = 22) {
+  init(symbol: String, color: Color, size: CGFloat = 22, theme: String? = nil) {
     glyph = .symbol(symbol, color)
     self.size = size
+    if let theme { self.theme = theme }
   }
 
   private var color: Color {
@@ -159,7 +161,7 @@ struct IconTile: View {
   }
 
   var body: some View {
-    let style = IconStyle.current(for: scheme)
+    let style = IconStyle.resolve(theme, for: scheme)
     let shape = RoundedRectangle(cornerRadius: size * 0.2237, style: .continuous)
     ZStack {
       if style == .clear {
@@ -309,7 +311,7 @@ struct GeneralSettings: View {
               set: { value in store.update(category) { $0.enabled = value } })
           ) {
             HStack(spacing: 10) {
-              IconTile(id: category.rawValue, size: 26)
+              IconTile(id: category.rawValue, size: 26, theme: store.iconTheme)
               VStack(alignment: .leading, spacing: 1) {
                 Text(category.name)
                 Text(category.subtitle).font(.caption).foregroundStyle(.secondary)
@@ -490,7 +492,7 @@ struct CategorySettings: View {
     Form {
       Section {
         HStack(spacing: 12) {
-          IconTile(id: category.rawValue, size: 40)
+          IconTile(id: category.rawValue, size: 40, theme: store.iconTheme)
           VStack(alignment: .leading, spacing: 2) {
             Text(category.name).font(.title3.weight(.semibold))
             Text(category.subtitle).font(.callout).foregroundStyle(.secondary)
