@@ -1,0 +1,15 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "scripts": [
+    {
+      "name": "Run",
+      "command": "pkill -x InformationBar; bash scripts/build-app.sh && open \"dist/Information Bar.app\"",
+      "icon": "play"
+    },
+    {
+      "name": "Install",
+      "command": "bash scripts/install-app.sh",
+      "icon": "build"
+    }
+  ]
+}

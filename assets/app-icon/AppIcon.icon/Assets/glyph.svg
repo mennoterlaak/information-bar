@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Information Bar</title>
+  <!-- A three-quarter gauge ring with a reading mark: the usage ring from the menu bar. -->
+  <path d="M 512 200 A 312 312 0 1 1 291.4 291.4" stroke="#FFFFFF" stroke-width="88" stroke-linecap="round" fill="none"/>
+  <circle cx="512" cy="512" r="74" fill="#FFFFFF"/>
+</svg>

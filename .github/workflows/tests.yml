@@ -1,0 +1,20 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  collector:
+    name: Collector tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m unittest discover -s tests -v
+
+  # The app itself needs Xcode with the macOS 27 SDK, which hosted runners do not
+  # provide yet. Build and test it locally with `swift test` and `bash scripts/build-app.sh`.
