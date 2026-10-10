@@ -87,10 +87,14 @@ enum DemoData {
         "assets": [
           krakenAsset("BTC", 0.06, earn: 0.01, decimals: 5, price: 74101.6, open: 73748.4),
           krakenAsset("ETH", 1.7, earn: 0.5, decimals: 5, price: 2239.99, open: 2221.6),
-          krakenAsset("TAO", 2, decimals: 4, price: 253.07, open: 258.91, market: "TAO/USD · EUR/USD"),
+          krakenAsset(
+            "TAO", 2, decimals: 4, price: 253.07, open: 258.91,
+            route: [("TAO/USD", false), ("EUR/USD", true)]),
           krakenAsset("EUR", 260.5, decimals: 2, price: 1, open: 1, fiat: true),
           krakenAsset("DOGE", 1500, decimals: 2, price: 0.0771891, open: 0.0756),
-          krakenAsset("USD", 100, decimals: 2, price: 0.893455, open: 0.8941, fiat: true),
+          krakenAsset(
+            "USD", 100, decimals: 2, price: 0.893455, open: 0.8941, route: [("EUR/USD", true)],
+            fiat: true),
           krakenAsset("DOT", 10, earn: 10, decimals: 8, price: 1.1171, open: 1.1032),
           krakenAsset("ADA", 0.4, decimals: 6, price: 0.5512, open: 0.5498),
           krakenAsset("USDT0", 5, decimals: 4),
@@ -139,7 +143,7 @@ enum DemoData {
 
   private static func krakenAsset(
     _ symbol: String, _ amount: Double, earn: Double = 0, decimals: Int, price: Double? = nil,
-    open: Double? = nil, market: String? = nil, fiat: Bool = false
+    open: Double? = nil, route: [(String, Bool)]? = nil, fiat: Bool = false
   ) -> [String: Any] {
     var asset: [String: Any] = [
       "symbol": symbol, "amount": amount, "earn": earn, "decimals": decimals, "fiat": fiat,
@@ -147,7 +151,9 @@ enum DemoData {
     if let price {
       asset["price"] = price
       asset["value"] = amount * price
-      asset["market"] = market ?? (price == 1 ? nil : symbol + "/EUR")
+      if let legs = route ?? (price == 1 ? nil : [(symbol + "/EUR", false)]) {
+        asset["route"] = legs.map { ["symbol": $0.0, "invert": $0.1] }
+      }
     }
     if let open { asset["openPrice"] = open }
     return asset

@@ -80,7 +80,7 @@ struct Provider: Decodable, Identifiable {
   let utilizationError: String?
   let pearl: PearlMetrics?
   let powerDevices: [PowerReading]?
-  let kraken: KrakenMetrics?
+  var kraken: KrakenMetrics?
 
   static func placeholder(_ id: String) -> Provider {
     let data = Data(

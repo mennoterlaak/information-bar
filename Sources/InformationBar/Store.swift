@@ -153,6 +153,7 @@ final class DashboardStore: ObservableObject {
   @Published var krakenMessage: String?
   @Published var validatingKraken = false
   @Published var krakenConnected = false
+  @Published private(set) var krakenFeed = KrakenFeedState.off
   @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
   @Published private(set) var preferences: AppPreferences
   @Published var selectedSettings = "global"
@@ -163,6 +164,11 @@ final class DashboardStore: ObservableObject {
   @Published var iconTheme = UserDefaults.standard.AppleIconAppearanceTheme ?? "Regular"
   private var iconThemeObservation: NSKeyValueObservation?
   var onUpdate: (() -> Void)?
+  /// Live Kraken prices changed; only the Kraken item needs redrawing.
+  var onLivePrices: (() -> Void)?
+  private let priceFeed = KrakenPriceFeed()
+  /// The collector's latest Kraken result, before live prices are applied.
+  private var krakenBase: Provider?
   private var timer: Timer?
   private var lastRefresh = Date.distantPast
   private var wakeObserver: NSObjectProtocol?
@@ -182,6 +188,13 @@ final class DashboardStore: ObservableObject {
     ) { [weak self] _, change in
       let theme = change.newValue.flatMap { $0 } ?? "Regular"
       Task { @MainActor in self?.iconTheme = theme }
+    }
+    priceFeed.onPrices = { [weak self] in self?.applyLivePrices() }
+    // Prices only reach the menu bar through the throttled onPrices; each market's first
+    // snapshot changes the state, and redrawing for every one would defeat the throttle.
+    priceFeed.onState = { [weak self] in
+      guard let self else { return }
+      krakenFeed = priceFeed.state
     }
   }
 
@@ -208,8 +221,30 @@ final class DashboardStore: ObservableObject {
 
   private func invalidate(_ id: String) {
     generations[id, default: 0] += 1
+    if id == "kraken" {
+      krakenBase = nil
+      syncPriceFeed()
+    }
     providers[id] = .placeholder(id)
     refresh(force: true, only: id)
+  }
+
+  /// Streams the markets behind the portfolio's prices while the Kraken item is shown, live
+  /// prices are on and the balances are current.
+  private func syncPriceFeed() {
+    let options = preferences.provider(.kraken)
+    let kraken = krakenBase?.isFresh == true ? krakenBase?.kraken : nil
+    priceFeed.stream(
+      kraken?.liveSymbols ?? [],
+      enabled: !demo && options.enabled && options.livePrices && kraken?.totalValue != nil)
+    applyLivePrices()
+  }
+
+  private func applyLivePrices() {
+    guard let base = krakenBase else { return }
+    let fetched = Date(timeIntervalSince1970: base.updatedAt ?? 0)
+    providers["kraken"] = base.repriced(priceFeed.prices(after: fetched))
+    onLivePrices?()
   }
 
   func saveDevice(_ device: HomeWizardDevice, token: String) throws {
@@ -287,6 +322,7 @@ final class DashboardStore: ObservableObject {
     if let data = try? JSONEncoder().encode(preferences) {
       defaults.set(data, forKey: "preferences.v2")
     }
+    syncPriceFeed()
     onUpdate?()
   }
 
@@ -298,6 +334,8 @@ final class DashboardStore: ObservableObject {
       Task { @MainActor in
         guard let self else { return }
         self.tick = Date()
+        // Balances can go stale without a new result arriving.
+        self.syncPriceFeed()
         self.onUpdate?()
         if Date().timeIntervalSince(self.lastRefresh) >= Double(self.preferences.refreshInterval) {
           self.refresh()
@@ -348,7 +386,13 @@ final class DashboardStore: ObservableObject {
             try Collector.run(arguments: arguments, key: key, configuration: configuration)
           }.value
           if generations[id, default: 0] == generation {
-            providers[id] = try JSONDecoder().decode(Provider.self, from: data)
+            let provider = try JSONDecoder().decode(Provider.self, from: data)
+            if id == "kraken" {
+              krakenBase = provider
+              syncPriceFeed()
+            } else {
+              providers[id] = provider
+            }
           }
         } catch {
           if generations[id, default: 0] == generation {

@@ -1229,8 +1229,9 @@ def kraken_rate(route, tickers, field):
     return rate
 
 
-def kraken_market(route):
-    return " · ".join("/".join(KRAKEN_RENAMES.get(part, part) for part in name.split("/")) for _, name, _ in route)
+def kraken_symbol(name):
+    """A pair as Kraken's WebSocket feed and website name it: XBT/EUR is BTC/EUR."""
+    return "/".join(KRAKEN_RENAMES.get(part, part) for part in name.split("/"))
 
 
 def fetch_kraken(config, root, currency):
@@ -1252,10 +1253,12 @@ def fetch_kraken(config, root, currency):
             total += value
             if opened is not None:
                 change += value - holding["amount"] * opened
+        # The app reprices these exact legs from Kraken's live feed, so they must match the price.
         assets.append({"symbol": holding["symbol"], "amount": holding["amount"], "earn": holding["earn"],
                        "decimals": holding["decimals"], "fiat": holding["symbol"] in KRAKEN_FIAT,
                        "price": price, "openPrice": opened, "value": value,
-                       "market": kraken_market(route) if route else None})
+                       "route": [{"symbol": kraken_symbol(name), "invert": inverse} for _, name, inverse in route]
+                       if route else None})
     assets.sort(key=lambda asset: (asset["value"] is None, -(asset["value"] or 0), asset["symbol"]))
     result = {"kraken": {"currency": currency, "totalValue": None if error else total,
                          "changeValue": None if error else change, "assets": assets}}

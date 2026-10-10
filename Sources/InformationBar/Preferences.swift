@@ -229,10 +229,12 @@ struct ProviderPreferences: Codable, Equatable {
   var currency = "USD"
   var utilizationPeriod = UtilizationPeriod.week
   var earningsView = EarningsView.gross
+  /// Kraken only: stream prices from Kraken's public feed between balance refreshes.
+  var livePrices = false
 
   enum CodingKeys: String, CodingKey {
     case enabled, elements, showAdditional, showResetDates, showEarningsHistory
-    case showMachineDetails, currency, utilizationPeriod, earningsView
+    case showMachineDetails, currency, utilizationPeriod, earningsView, livePrices
   }
 
   private enum LegacyKeys: String, CodingKey { case style, metric, windowID }
@@ -253,6 +255,7 @@ struct ProviderPreferences: Codable, Equatable {
     utilizationPeriod =
       try values.decodeIfPresent(UtilizationPeriod.self, forKey: .utilizationPeriod) ?? .week
     earningsView = try values.decodeIfPresent(EarningsView.self, forKey: .earningsView) ?? .gross
+    livePrices = try values.decodeIfPresent(Bool.self, forKey: .livePrices) ?? false
     if let saved = try values.decodeIfPresent([MenuElement].self, forKey: .elements) {
       elements = saved
     } else {

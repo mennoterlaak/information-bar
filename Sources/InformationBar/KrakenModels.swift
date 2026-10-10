@@ -4,11 +4,11 @@ import Foundation
 struct KrakenMetrics: Decodable {
   let currency: String
   /// Sum over priced holdings; nil when prices are unavailable.
-  let totalValue: Double?
+  var totalValue: Double?
   /// Change of the current holdings since Kraken's 00:00 UTC open.
-  let changeValue: Double?
+  var changeValue: Double?
   /// Largest value first; unpriced holdings last.
-  let assets: [KrakenAsset]
+  var assets: [KrakenAsset]
 
   /// Values are already in `currency`, so no conversion applies.
   var money: MoneyFormat { MoneyFormat(currency: currency, rates: ["EUR": 1]) }
@@ -26,6 +26,34 @@ struct KrakenMetrics: Decodable {
     guard let symbol else { return tradedAssets.first }
     return assets.first { $0.symbol == symbol }
   }
+
+  /// Every market a holding's price is multiplied from.
+  var liveSymbols: Set<String> { Set(assets.flatMap { $0.route ?? [] }.map(\.symbol)) }
+
+  /// The same holdings priced from Kraken's live feed. Holdings missing a leg keep the
+  /// collector's price; the total and today's change are summed as the collector sums them.
+  /// Holdings keep their order, so rows do not swap places between balance refreshes.
+  func repriced(_ prices: [String: Double]) -> KrakenMetrics {
+    guard totalValue != nil else { return self }
+    var copy = self
+    var total = 0.0
+    var change = 0.0
+    for index in copy.assets.indices {
+      var asset = copy.assets[index]
+      if let price = asset.route.flatMap({ routePrice($0, prices) }) {
+        asset.price = price
+        asset.value = asset.amount * price
+      }
+      if let value = asset.value {
+        total += value
+        if let open = asset.openPrice { change += value - asset.amount * open }
+      }
+      copy.assets[index] = asset
+    }
+    copy.totalValue = total
+    copy.changeValue = change
+    return copy
+  }
 }
 
 struct KrakenAsset: Decodable, Identifiable {
@@ -38,18 +66,51 @@ struct KrakenAsset: Decodable, Identifiable {
   let decimals: Int
   let fiat: Bool
   /// Last trade in the portfolio currency.
-  let price: Double?
+  var price: Double?
   /// Today's 00:00 UTC opening price in the portfolio currency.
   let openPrice: Double?
-  let value: Double?
-  /// Kraken markets the price comes from, such as "TAO/USD · EUR/USD".
-  let market: String?
+  var value: Double?
+  /// Markets the price is multiplied from; nil for cash in the portfolio currency and for
+  /// assets Kraken cannot price.
+  let route: [KrakenLeg]?
 
   var id: String { symbol }
+
+  /// Kraken markets the price comes from, such as "TAO/USD · EUR/USD".
+  var market: String? { route.map { $0.map(\.symbol).joined(separator: " · ") } }
 
   var change: Double? {
     guard let price, let openPrice, openPrice > 0 else { return nil }
     return price / openPrice - 1
+  }
+}
+
+/// One market on the way to the portfolio currency, named as Kraken's WebSocket feed names it.
+struct KrakenLeg: Decodable, Equatable {
+  let symbol: String
+  /// The pair is quoted the other way round, so its price is divided instead of multiplied.
+  let invert: Bool
+}
+
+/// The product of each leg's last trade, or nil while any leg has none.
+func routePrice(_ route: [KrakenLeg], _ prices: [String: Double]) -> Double? {
+  guard !route.isEmpty else { return nil }
+  var rate = 1.0
+  for leg in route {
+    guard let price = prices[leg.symbol], price > 0 else { return nil }
+    rate *= leg.invert ? 1 / price : price
+  }
+  return rate
+}
+
+extension Provider {
+  /// Kraken balances priced from the live feed. Stale balances stay as they are, so they keep
+  /// dropping out of the menu bar like every other stale value.
+  func repriced(_ prices: [String: Double]) -> Provider {
+    guard isFresh, !prices.isEmpty, let kraken else { return self }
+    var copy = self
+    copy.kraken = kraken.repriced(prices)
+    return copy
   }
 }
 
