@@ -197,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       Task { @MainActor in self?.panel.dismiss() }
     }
     store.onUpdate = { [weak self] in self?.updateMenuItems() }
+    store.onLivePrices = { [weak self] in self?.updateMenuItems(only: .kraken) }
     updateMenuItems()
     store.start()
     let arguments = CommandLine.arguments
@@ -251,13 +252,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return edit
   }
 
-  private func updateMenuItems() {
-    switch store.preferences.theme {
-    case .system: NSApp.appearance = nil
-    case .light: NSApp.appearance = NSAppearance(named: .aqua)
-    case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+  private func updateMenuItems(only: ProviderCategory? = nil) {
+    if only == nil {
+      switch store.preferences.theme {
+      case .system: NSApp.appearance = nil
+      case .light: NSApp.appearance = NSAppearance(named: .aqua)
+      case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+      }
     }
-    for category in ProviderCategory.allCases {
+    for category in ProviderCategory.allCases where only == nil || category == only {
       let options = store.preferences.provider(category)
       if !options.enabled {
         if activeCategory == category { panel.dismiss() }
@@ -296,6 +299,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       button.toolTip = "\(category.name) · \(summary) · \(provider.ageLabel)"
       button.setAccessibilityLabel("\(category.name): \(summary)")
     }
+    // SwiftUI applies the new data on the next pass; measure the open panel after it.
+    DispatchQueue.main.async { [weak self] in self?.panel.refit() }
+    guard only == nil else { return }
     if statusItems.isEmpty && fallbackItem == nil {
       let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
       item.button?.image = NSImage(
@@ -308,8 +314,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       NSStatusBar.system.removeStatusItem(item)
       fallbackItem = nil
     }
-    // SwiftUI applies the new data on the next pass; measure the open panel after it.
-    DispatchQueue.main.async { [weak self] in self?.panel.refit() }
   }
 
   @objc private func togglePanel(_ sender: NSStatusBarButton) {

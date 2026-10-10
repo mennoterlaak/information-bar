@@ -142,14 +142,20 @@ class KrakenTests(unittest.TestCase):
         self.assertAlmostEqual(portfolio["changeValue"], 150 + 100 + (2000 - 200 / 1.1 * 10))
         self.assertEqual([a["symbol"] for a in portfolio["assets"]], ["BTC", "ETH", "TAO", "EUR", "USD", "DOT", "USDT0"])
         btc, eth, tao, eur, usd, dot = portfolio["assets"][:6]
-        self.assertEqual((btc["price"], btc["openPrice"], btc["market"]), (50000, 49000, "BTC/EUR"))
+        self.assertEqual((btc["price"], btc["openPrice"]), (50000, 49000))
         self.assertAlmostEqual(eth["price"], 2500)
-        self.assertEqual(eth["market"], "ETH/BTC · BTC/EUR")
         self.assertAlmostEqual(tao["price"], 200)
-        self.assertEqual((eur["price"], eur["fiat"], eur["market"]), (1, True, None))
+        self.assertEqual((eur["price"], eur["fiat"]), (1, True))
         self.assertAlmostEqual(usd["value"], 100)
         self.assertIsNone(dot["price"])
         self.assertIsNone(dot["value"])
+        # Legs use the WebSocket names, so the app can stream the same markets.
+        self.assertEqual(btc["route"], [{"symbol": "BTC/EUR", "invert": False}])
+        self.assertEqual(eth["route"], [{"symbol": "ETH/BTC", "invert": False}, {"symbol": "BTC/EUR", "invert": False}])
+        self.assertEqual(tao["route"], [{"symbol": "TAO/USD", "invert": False}, {"symbol": "EUR/USD", "invert": True}])
+        self.assertEqual(usd["route"], [{"symbol": "EUR/USD", "invert": True}])
+        self.assertIsNone(eur["route"])  # Cash in the portfolio currency is always 1.
+        self.assertIsNone(dot["route"])
 
         balance = [kwargs for url, kwargs in calls if url.endswith("/0/private/Balance")]
         self.assertEqual(len(balance), 1)

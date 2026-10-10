@@ -8,7 +8,7 @@ final class KrakenTests: XCTestCase {
 
   private func asset(
     _ symbol: String, _ amount: Double, price: Double? = nil, open: Double? = nil,
-    fiat: Bool = false
+    fiat: Bool = false, route: [(String, Bool)]? = nil
   ) -> [String: Any] {
     var raw: [String: Any] = [
       "symbol": symbol, "amount": amount, "earn": 0, "decimals": 5, "fiat": fiat,
@@ -18,7 +18,30 @@ final class KrakenTests: XCTestCase {
       raw["value"] = amount * price
     }
     if let open { raw["openPrice"] = open }
+    if let route { raw["route"] = route.map { ["symbol": $0.0, "invert": $0.1] } }
     return raw
+  }
+
+  /// A EUR portfolio priced directly (BTC), through a bridge (TAO), inverted (USD), as cash
+  /// (EUR) and not at all (USDT0). Total 7,540; change since the open 80.
+  private func routed(age: Double = 0) throws -> Provider {
+    let raw: [String: Any] = [
+      "id": "kraken", "name": "Kraken", "status": "ok",
+      "updatedAt": Date().timeIntervalSince1970 - age,
+      "kraken": [
+        "currency": "EUR", "totalValue": 7540, "changeValue": 80,
+        "assets": [
+          asset("BTC", 0.1, price: 70000, open: 69000, route: [("BTC/EUR", false)]),
+          asset(
+            "TAO", 2, price: 200, open: 210, route: [("TAO/USD", false), ("EUR/USD", true)]),
+          asset("USD", 100, price: 0.9, open: 0.9, fiat: true, route: [("EUR/USD", true)]),
+          asset("EUR", 50, price: 1, open: 1, fiat: true),
+          asset("USDT0", 5),
+        ],
+      ],
+    ]
+    return try JSONDecoder().decode(
+      Provider.self, from: JSONSerialization.data(withJSONObject: raw))
   }
 
   /// A collector payload: cash is the largest holding, so it must not become the default price.
@@ -126,6 +149,53 @@ final class KrakenTests: XCTestCase {
     XCTAssertTrue(MenuElementKind.available(for: .kraken).contains(.assetPrice))
     XCTAssertFalse(MenuElementKind.available(for: .kraken).contains(.used))
     XCTAssertFalse(MenuElementKind.available(for: .pearl).contains(.assetPrice))
+  }
+
+  func testRoutesNameTheMarketsToStream() throws {
+    let kraken = try XCTUnwrap(try routed().kraken)
+    XCTAssertEqual(kraken.liveSymbols, ["BTC/EUR", "TAO/USD", "EUR/USD"])
+    XCTAssertEqual(kraken.asset("TAO")?.market, "TAO/USD · EUR/USD")
+    XCTAssertNil(kraken.asset("EUR")?.market)
+    XCTAssertEqual(routePrice([KrakenLeg(symbol: "EUR/USD", invert: true)], ["EUR/USD": 1.25]), 0.8)
+    XCTAssertNil(routePrice([], ["EUR/USD": 1.25]))
+  }
+
+  func testLivePricesRepriceHoldingsTheTotalAndTodaysChange() throws {
+    let live = try routed().repriced(["BTC/EUR": 80000, "TAO/USD": 250, "EUR/USD": 1.25])
+    let kraken = try XCTUnwrap(live.kraken)
+    XCTAssertEqual(kraken.asset("BTC")?.price, 80000)
+    XCTAssertEqual(kraken.asset("TAO")?.price ?? 0, 200, accuracy: 1e-9)
+    XCTAssertEqual(kraken.asset("USD")?.price ?? 0, 0.8, accuracy: 1e-9)
+    XCTAssertEqual(kraken.asset("EUR")?.price, 1)
+    XCTAssertNil(kraken.asset("USDT0")?.price)
+    XCTAssertEqual(kraken.totalValue ?? 0, 8000 + 400 + 80 + 50, accuracy: 1e-9)
+    XCTAssertEqual(kraken.changeValue ?? 0, 1100 - 20 - 10, accuracy: 1e-9)
+    // Rows keep their order between balance refreshes.
+    XCTAssertEqual(kraken.assets.map(\.symbol), ["BTC", "TAO", "USD", "EUR", "USDT0"])
+
+    // A leg without a live price leaves that holding at the collector's price.
+    let partial = try XCTUnwrap(try routed().repriced(["BTC/EUR": 80000]).kraken)
+    XCTAssertEqual(partial.asset("TAO")?.price, 200)
+    XCTAssertEqual(partial.totalValue ?? 0, 8000 + 400 + 90 + 50, accuracy: 1e-9)
+  }
+
+  func testStaleOrUnpricedPortfoliosAreNotRepriced() throws {
+    let prices = ["BTC/EUR": 80000.0]
+    XCTAssertEqual(try routed(age: 3600).repriced(prices).kraken?.totalValue, 7540)
+    let unpriced = try XCTUnwrap(try provider(total: nil, change: nil, status: "partial").kraken)
+    XCTAssertNil(unpriced.repriced(prices).totalValue)
+    XCTAssertEqual(try routed().repriced([:]).kraken?.totalValue, 7540)
+  }
+
+  func testLivePricesStayOffForEarlierPreferences() throws {
+    let older = try JSONDecoder().decode(
+      ProviderPreferences.self, from: Data(#"{"enabled":true,"currency":"EUR"}"#.utf8))
+    XCTAssertFalse(older.livePrices)
+    var options = ProviderPreferences.defaults(for: .kraken)
+    options.livePrices = true
+    let decoded = try JSONDecoder().decode(
+      ProviderPreferences.self, from: JSONEncoder().encode(options))
+    XCTAssertTrue(decoded.livePrices)
   }
 
   func testHashratePairsShareTheirUnit() {

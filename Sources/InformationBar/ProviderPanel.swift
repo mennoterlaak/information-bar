@@ -269,6 +269,9 @@ struct ProviderPanel: View {
       if let subtitle {
         HStack(alignment: .firstTextBaseline) {
           Text(subtitle).font(.system(size: 13)).foregroundStyle(.secondary)
+          if category == .kraken && provider.isFresh && store.krakenFeed.isLive {
+            LiveBadge()
+          }
           if let change = krakenChange {
             Spacer()
             Text(change.text).font(.system(size: 13)).monospacedDigit()

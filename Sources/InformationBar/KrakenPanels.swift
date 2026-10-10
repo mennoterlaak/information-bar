@@ -1,6 +1,17 @@
 import SwiftUI
 
 /// Green for gains and red for losses, as in Stocks; no change stays neutral.
+/// Marks prices that follow Kraken's trades as they happen.
+struct LiveBadge: View {
+  var body: some View {
+    HStack(spacing: 4) {
+      Circle().fill(.green).frame(width: 6, height: 6)
+      Text("Live").font(.system(size: 12)).foregroundStyle(.secondary)
+    }
+    .help("Prices follow Kraken's trades as they happen. Balances refresh every minute.")
+  }
+}
+
 func changeColor(_ fraction: Double) -> Color {
   formatChange(fraction) == formatChange(0) ? .secondary : fraction > 0 ? .green : .red
 }

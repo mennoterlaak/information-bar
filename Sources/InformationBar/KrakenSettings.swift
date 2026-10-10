@@ -10,6 +10,11 @@ struct KrakenSettingsSections: View {
       get: { store.preferences.provider(.kraken).currency },
       set: { value in store.update(.kraken) { $0.currency = value } })
   }
+  private var livePrices: Binding<Bool> {
+    Binding(
+      get: { store.preferences.provider(.kraken).livePrices },
+      set: { value in store.update(.kraken) { $0.livePrices = value } })
+  }
 
   var body: some View {
     Section {
@@ -17,11 +22,15 @@ struct KrakenSettingsSections: View {
         Text("US dollar").tag("USD")
         Text("Euro").tag("EUR")
       }
+      Toggle(isOn: livePrices) {
+        Text("Live prices")
+        Text(liveStatus)
+      }
     } header: {
       sectionHeader(
         "Portfolio",
         info:
-          "Each asset is valued at the last trade on its Kraken market in this currency. Assets without one are converted through their USD, EUR, BTC, ETH, USDT or USDC market. Staked and Earn balances count toward their asset; fee credits are left out."
+          "Each asset is valued at the last trade on its Kraken market in this currency. Assets without one are converted through their USD, EUR, BTC, ETH, USDT or USDC market. Staked and Earn balances count toward their asset; fee credits are left out. Live prices follow every trade on those markets through Kraken's public feed, without your keys, while the Mac and its display are awake. The menu bar redraws at most once a second; balances still refresh every minute."
       )
     }
     Section {
@@ -64,6 +73,27 @@ struct KrakenSettingsSections: View {
         info:
           "Both keys are stored in macOS Keychain and passed to the collector privately. The API key is sent only to api.kraken.com; the private key never leaves this Mac and only signs requests. Neither is written to the cache."
       )
+    }
+  }
+
+  private var liveStatus: String {
+    let options = store.preferences.provider(.kraken)
+    guard options.livePrices else { return "Prices update with the balances every minute." }
+    switch store.krakenFeed {
+    case .off:
+      if !options.enabled { return "Starts when Kraken is shown in the menu bar." }
+      if !store.krakenConnected { return "Starts once your Kraken account is connected." }
+      if provider.isFresh && provider.kraken?.liveSymbols.isEmpty == true {
+        return "None of these holdings has a Kraken market to follow."
+      }
+      return "Starts once the portfolio has loaded."
+    case .connecting: return "Connecting to Kraken…"
+    case .live(let markets):
+      return "Following \(markets) " + (markets == 1 ? "market" : "markets") + " as they trade."
+    case .retrying(let next):
+      return "Connection lost. Trying again at "
+        + next.formatted(date: .omitted, time: .standard) + "."
+    case .paused: return "Paused while the display is asleep."
     }
   }
 
