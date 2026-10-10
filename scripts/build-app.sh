@@ -3,8 +3,8 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 # Single source of truth for the version: Settings and the collector read it from the bundle.
-version="1.0.0"
-build="5"
+version="1.1.0"
+build="8"
 swift build -c release
 binary_dir="$(swift build -c release --show-bin-path)"
 app_dir="$project_dir/dist/Information Bar.app"
@@ -18,6 +18,7 @@ xcrun vtool -set-build-version macos 27.0 "$sdk_version" -replace \
   -output "$app_dir/Contents/MacOS/InformationBar.stamped" "$app_dir/Contents/MacOS/InformationBar" 2>/dev/null
 mv "$app_dir/Contents/MacOS/InformationBar.stamped" "$app_dir/Contents/MacOS/InformationBar"
 cp scripts/collect.py "$app_dir/Contents/Resources/collect.py"
+cp scripts/homewizard-ca.pem "$app_dir/Contents/Resources/homewizard-ca.pem"
 mkdir -p "$app_dir/Contents/Resources/Providers"
 cp assets/providers/*.svg "$app_dir/Contents/Resources/Providers/"
 cp assets/providers/README.md "$app_dir/Contents/Resources/Providers/"
@@ -50,6 +51,11 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>27.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>Information Bar discovers HomeWizard meters and reads power usage from your local devices.</string>
+  <key>NSBonjourServices</key><array>
+    <string>_hwenergy._tcp</string>
+    <string>_homewizard._tcp</string>
+  </array>
 </dict></plist>
 PLIST
 codesign --force --sign - "$app_dir"

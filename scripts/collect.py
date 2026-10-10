@@ -10,13 +10,19 @@ import contextlib
 import datetime as dt
 import email.utils
 import fcntl
+import hashlib
+import http.client
+import ipaddress
 import json
 import math
 import os
 from pathlib import Path
+import re
 import selectors
 import shutil
 import signal
+import socket
+import ssl
 import sqlite3
 import subprocess
 import sys
@@ -27,17 +33,19 @@ import urllib.parse
 import urllib.request
 
 APP_SUPPORT = Path.home() / "Library/Application Support/Information Bar"
-NAMES = {"codex": "ChatGPT", "claude": "Claude", "cursor": "Cursor", "vast": "Vast.ai"}
+NAMES = {"codex": "ChatGPT", "claude": "Claude", "cursor": "Cursor", "vast": "Vast.ai", "pearl": "Pearl", "power": "Power"}
 LINKS = {
     "codex": "https://chatgpt.com/codex/settings/usage",
     "claude": "https://claude.ai/settings/usage",
     "cursor": "https://cursor.com/dashboard?tab=usage",
     "vast": "https://cloud.vast.ai/host/machines/",
+    "pearl": "https://pool.kryptex.com/prl",
+    "power": "https://api-documentation.homewizard.com/docs/getting-started/",
 }
-TTL = {"codex": 60, "claude": 300, "cursor": 60, "vast": 60}
+TTL = {"codex": 60, "claude": 300, "cursor": 60, "vast": 60, "pearl": 60, "power": 60}
 # The app passes its bundle version; "dev" when run directly.
 VERSION = os.environ.get("INFORMATION_BAR_VERSION", "dev")
-SOURCES = {"codex": "Codex app server", "claude": "Claude account usage", "cursor": "Cursor account usage", "vast": "Vast.ai host API"}
+SOURCES = {"codex": "Codex app server", "claude": "Claude account usage", "cursor": "Cursor account usage", "vast": "Vast.ai host API", "pearl": "Kryptex · Pearl explorer · CoinGecko", "power": "HomeWizard local API"}
 # European Central Bank reference rates, no credential involved.
 RATES_URL = "https://api.frankfurter.dev/v1/latest"
 
@@ -77,7 +85,8 @@ def retry_after_seconds(header):
 
 
 def request_json(url, token=None, *, body=None, headers=None):
-    if urllib.parse.urlparse(url).hostname not in {"api.anthropic.com", "api2.cursor.sh", "console.vast.ai", "api.frankfurter.dev"}:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in {"api.anthropic.com", "api2.cursor.sh", "console.vast.ai", "api.frankfurter.dev", "pool.kryptex.com", "api.coingecko.com", "blockbook.pearlresearch.ai"}:
         raise SourceError("Unrecognized provider endpoint.")
     hdr = {"Accept": "application/json", "User-Agent": "InformationBar/" + VERSION}
     if token:
@@ -612,7 +621,390 @@ def private_write(path, payload):
             os.unlink(temp)
 
 
-def collect(provider, force=False, provided=None, cache_dir=None, currency="USD", utilization_days=None):
+def local_endpoint(raw, default_path=None, scheme=None):
+    """Validate a user-configured LAN endpoint; never accept credentials in a URL."""
+    if not isinstance(raw, str) or not raw.strip():
+        raise SourceError("Enter the local API address in Settings.")
+    raw = raw.strip()
+    if "://" not in raw:
+        raw = (scheme or "http") + "://" + raw
+    try:
+        url = urllib.parse.urlsplit(raw)
+        port = url.port
+    except ValueError:
+        raise SourceError("Enter a valid local API address.") from None
+    if (url.scheme not in ("http", "https") or (scheme and url.scheme != scheme)
+            or not url.hostname or url.username is not None or url.password is not None
+            or url.query or url.fragment):
+        raise SourceError("Use a local HTTP(S) address without a password, query or fragment.")
+    path = url.path.rstrip("/")
+    if default_path:
+        if path not in ("", default_path):
+            raise SourceError("Enter the device address or its measurement endpoint.")
+        path = default_path
+    # Resolve once and connect to the checked address, avoiding DNS rebinding and proxies.
+    try:
+        addresses = socket.getaddrinfo(url.hostname, port or (443 if url.scheme == "https" else 80), type=socket.SOCK_STREAM)
+        ips = list(dict.fromkeys(entry[4][0] for entry in addresses))
+        if not ips or any(not (ipaddress.ip_address(ip).is_private or ipaddress.ip_address(ip).is_loopback)
+                          or ipaddress.ip_address(ip).is_unspecified or ipaddress.ip_address(ip).is_multicast for ip in ips):
+            raise SourceError("The API must be on your local network.")
+    except OSError:
+        raise SourceError("The local device could not be found. Check its address and your network.") from None
+    return url, ips[0], port or (443 if url.scheme == "https" else 80), path or "/"
+
+
+def local_json(raw, *, path=None, version=None, token=None, certificate_name=None):
+    url, address, port, path = local_endpoint(raw, path, "https" if version == "v2" else "http" if version == "v1" else None)
+    connection = None
+    try:
+        if url.scheme == "https":
+            if version == "v2":
+                if not token:
+                    raise SourceError("Save this HomeWizard device's API token in Power Settings.")
+                if not certificate_name or not certificate_name.startswith("appliance/"):
+                    raise SourceError("Set the HomeWizard device type and serial number.")
+                ca = Path(__file__).with_name("homewizard-ca.pem")
+                context = ssl.create_default_context(cafile=str(ca))
+                context.hostname_checks_common_name = True
+                hostname = certificate_name
+            else:
+                context = ssl.create_default_context()
+                hostname = url.hostname
+            # TLS authenticates the configured device name; the TCP destination is the vetted IP.
+            connection = http.client.HTTPConnection(address, port, timeout=8)
+            connection.connect()
+            connection.sock = context.wrap_socket(connection.sock, server_hostname=hostname)
+        else:
+            connection = http.client.HTTPConnection(address, port, timeout=8)
+        headers = {"Accept": "application/json", "Host": url.netloc, "User-Agent": "InformationBar/" + VERSION}
+        if version == "v2":
+            headers.update({"Authorization": "Bearer " + token, "X-Api-Version": "2"})
+        connection.request("GET", path, headers=headers)
+        response = connection.getresponse()
+        if response.status != 200:
+            # No redirects, error bodies, URLs or credentials in diagnostics.
+            raise SourceError("Local API returned HTTP %d. Check the API settings and connection." % response.status)
+        data = json.loads(response.read(1024 * 1024))
+        if not isinstance(data, dict):
+            raise ValueError()
+        return data
+    except SourceError:
+        raise
+    except ssl.SSLError:
+        raise SourceError("Could not verify the device certificate. Check its type and serial number.") from None
+    except (OSError, http.client.HTTPException):
+        raise SourceError("Could not reach the local API. Check the address and that the API is running.") from None
+    except (ValueError, UnicodeError):
+        raise SourceError("The local API returned an unrecognized response.") from None
+    finally:
+        if connection:
+            connection.close()
+
+
+def parse_homewizard(data, version):
+    value = number(data.get("power_w" if version == "v2" else "active_power_w"))
+    if value is None:
+        raise SourceError("This device did not report a power measurement.")
+    # Negative values mean export, not a negative operating cost.
+    return value
+
+
+def fetch_power(config, tokens):
+    devices = config.get("devices") or []
+    if not isinstance(devices, list) or len(devices) > 32:
+        raise SourceError("Configure up to 32 HomeWizard devices in Power Settings.")
+    def read(device):
+        row = {"id": device["id"], "name": device.get("name") or "HomeWizard"}
+        try:
+            version = device.get("apiVersion", "v1")
+            if version not in ("v1", "v2"):
+                raise SourceError("Select HomeWizard API v1 or v2.")
+            data = local_json(device.get("address"), path="/api/measurement" if version == "v2" else "/api/v1/data",
+                              version=version, token=tokens.get(device["id"]),
+                              certificate_name="appliance/%s/%s" % (device.get("productType", "p1dongle"), device.get("serial", "").lower()))
+            row.update(watts=parse_homewizard(data, version), updatedAt=time.time(), status="ok")
+        except SourceError as exc:
+            row.update(status="error", error=str(exc))
+        return row
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(read, devices))
+    failures = sum(row["status"] != "ok" for row in rows)
+    result = {"powerDevices": rows}
+    if failures:
+        result.update(status="partial", error="%d HomeWizard device(s) unavailable. Check Power Settings." % failures)
+    return result
+
+
+def parse_pool_workers(data, wallet, worker=""):
+    """Kryptex v3 reports accepted 30m/3h/24h averages in H/s, including numeric strings."""
+    rows = data.get("results")
+    if (not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows)
+            or data.get("next") or ("count" in data and number(data["count"]) != len(rows))):
+        raise SourceError("Kryptex did not return a complete list of Pearl workers.")
+    selected = [row for row in rows if not worker or row.get("worker") == worker]
+    if not selected:
+        raise SourceError("Worker not found on Kryptex. Check the worker name or leave it empty."
+                          if worker else "No Pearl workers found on Kryptex for this wallet yet.")
+    if any(row.get("miner") != wallet or row.get("coin") != "prl"
+           or row.get("status") not in ("online", "offline") for row in selected):
+        raise SourceError("Kryptex returned unrecognized Pearl worker data.")
+
+    def average(field, *, current=False):
+        values = [0.0 if current and row["status"] == "offline" else number(row.get(field))
+                  for row in selected]
+        if any(value is None or value < 0 for value in values):
+            return None
+        total = sum(values)
+        return total if math.isfinite(total) else None
+
+    hashrate = average("avg_hashrate_30m", current=True)
+    if hashrate is None:
+        raise SourceError("Kryptex has not reported a valid 30-minute hashrate yet.")
+    return {"hashrate": hashrate, "hashrate3h": average("avg_hashrate_3h"),
+            "hashrate24h": average("avg_hashrate_24h"),
+            "onlineWorkers": sum(row["status"] == "online" for row in selected),
+            "workerCount": len(selected), "supportsPPS": all(row.get("scheme") == "pps" for row in selected)}
+
+
+def pearl_yield(pool, hashrate):
+    per_hash = number(pool.get("estimated_profit_day"))
+    pool_fee = number(pool.get("fee"))
+    if (str(pool.get("ticker", "")).lower() != "prl" or per_hash is None or per_hash <= 0
+            or pool_fee is None or not 0 <= pool_fee < 1):
+        raise SourceError("Kryptex did not report a valid Pearl yield or fee.")
+    # Accepted shares already exclude time spent on the miner's developer-fee wallet.
+    return hashrate * per_hash * (1 - pool_fee), pool_fee * 100
+
+
+def pearl_source(path, ttl, loader):
+    """Independent public-source caching/backoff, so a price outage never stops pool polling."""
+    now = time.time()
+    old = {}
+    try:
+        old = json.loads(path.read_text())
+    except (OSError, ValueError):
+        pass
+    retry = number(old.get("nextRetryAt")) or 0
+    if now < retry:
+        raise SourceError(old.get("error") or "The Pearl data source is waiting before retrying.", retry - now)
+    if now - (number(old.get("checkedAt")) or 0) < ttl:
+        return old
+    try:
+        result = {**loader(), "checkedAt": now}
+    except SourceError as exc:
+        private_write(path, {"nextRetryAt": now + exc.retry_after, "error": str(exc)})
+        raise
+    private_write(path, result)
+    return result
+
+
+def pearl_price(root):
+    def load():
+        data = request_json("https://api.coingecko.com/api/v3/simple/price?ids=pearl-2&vs_currencies=usd&include_last_updated_at=true")
+        coin = data.get("pearl-2") or {}
+        if not isinstance(coin, dict):
+            raise SourceError("Pearl's market price is unavailable or stale.")
+        price, updated = number(coin.get("usd")), timestamp(coin.get("last_updated_at"))
+        if price is None or price <= 0 or updated is None or not -60 <= time.time() - updated < 900:
+            raise SourceError("Pearl's market price is unavailable or stale.")
+        return {"priceUSD": price, "updatedAt": updated}
+    result = pearl_source(root / "pearl-price.json", 120, load)
+    # Even within the cache TTL, don't display a quote past its freshness limit.
+    if time.time() - result["updatedAt"] >= 900:
+        raise SourceError("Pearl's market price is unavailable or stale.")
+    return result
+
+
+def pearl_pool(root):
+    def load():
+        data = request_json("https://pool.kryptex.com/prl/api/v1/pool/info")
+        pearl_yield(data, 0)  # Validate before caching a normalized subset.
+        return {key: data[key] for key in ("ticker", "estimated_profit_day", "fee")}
+    return pearl_source(root / "pearl-pool.json", 60, load)
+
+
+def pearl_wallet_address(config):
+    wallet = str(config.get("walletAddress") or "").strip()
+    if not re.fullmatch(r"prl1[0-9a-z]{20,120}", wallet):
+        raise SourceError("Enter the public PRL mining wallet address in Pearl Settings.")
+    return wallet
+
+
+def pearl_workers(config, root):
+    wallet = pearl_wallet_address(config)
+    worker = str(config.get("workerName") or "").strip()
+
+    def load():
+        try:
+            data = request_json("https://pool.kryptex.com/prl/api/v3/miner/workers/"
+                                + urllib.parse.quote(wallet, safe=""))
+        except HTTPFailure as exc:
+            if exc.status == 404:
+                raise SourceError("Kryptex could not find this Pearl mining wallet.", exc.retry_after) from None
+            raise
+        return parse_pool_workers(data, wallet, worker)
+
+    # Only normalized metrics are cached, separately for each wallet/worker selection.
+    key = hashlib.sha256(json.dumps([wallet, worker]).encode()).hexdigest()
+    result = pearl_source(root / ("pearl-workers-" + key + ".json"), 60, load)
+    return {key: value for key, value in result.items() if key != "checkedAt"}
+
+
+def pearl_account_source(config, root, source, path, parser):
+    wallet = pearl_wallet_address(config)
+    key = hashlib.sha256(wallet.encode()).hexdigest()
+
+    def load():
+        data = request_json(path + urllib.parse.quote(wallet, safe=""))
+        return parser(data)
+
+    result = pearl_source(root / ("pearl-" + source + "-" + key + ".json"), 60, load)
+    return {key: value for key, value in result.items() if key != "checkedAt"}
+
+
+def parse_pearl_balance(data):
+    fields = {name: number(data.get(key)) for name, key in (
+        ("poolBalance", "total"), ("poolConfirmed", "confirmed"),
+        ("poolUnconfirmed", "unconfirmed"), ("payoutThreshold", "threshold"))}
+    if any(value is None or value < 0 for value in fields.values()) or fields["payoutThreshold"] <= 0:
+        raise SourceError("Kryptex did not report valid pool balances and payout threshold.")
+    if not math.isclose(fields["poolBalance"], fields["poolConfirmed"] + fields["poolUnconfirmed"], rel_tol=1e-8, abs_tol=1e-8):
+        raise SourceError("Kryptex's confirmed and unconfirmed balances do not match its total.")
+    return fields
+
+
+def pearl_balance(config, root):
+    return pearl_account_source(config, root, "balance", "https://pool.kryptex.com/prl/api/v1/miner/balance/", parse_pearl_balance)
+
+
+def parse_pearl_payouts(data, wallet):
+    rows, count = data.get("results"), number(data.get("count"))
+    if (not isinstance(rows, list) or count is None or count < len(rows) or not count.is_integer()
+            or (count > 0 and not rows)):
+        raise SourceError("Kryptex did not return a valid payout history.")
+    payouts = []
+    statuses = {"FINISHED": "Paid", "PENDING": "Pending", "WAITING": "Pending",
+                "PROCESSING": "Processing", "SENDING": "Sending", "SENT": "Sent",
+                "FAILED": "Failed", "ERROR": "Failed", "REJECTED": "Rejected",
+                "CANCELLED": "Cancelled", "CANCELED": "Cancelled"}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("address", wallet) != wallet:
+            raise SourceError("Kryptex returned unrecognized payout data.")
+        date, amount = timestamp(row.get("date")), number(row.get("received"))
+        state = str(row.get("status") or "").upper()
+        # Pending rows may not have a received amount yet. Never present the planned amount as paid.
+        if amount is None and state != "FINISHED":
+            amount = number(row.get("amount"))
+        if date is None or date <= 0 or amount is None or amount < 0:
+            raise SourceError("Kryptex returned an invalid payout amount or date.")
+        txid = row.get("txid")
+        txid = txid.lower() if isinstance(txid, str) and re.fullmatch(r"[0-9a-fA-F]{64}", txid) else None
+        normalized = {"date": date, "amount": amount, "status": statuses.get(state, "Unknown"), "txid": txid}
+        normalized["id"] = hashlib.sha256(json.dumps(normalized, sort_keys=True).encode()).hexdigest()
+        payouts.append(normalized)
+    payouts.sort(key=lambda row: row["date"], reverse=True)
+    # Only the newest page is fetched. All-time paid comes from the separate stats endpoint.
+    return {"payouts": payouts[:5], "payoutCount": int(count)}
+
+
+def pearl_payouts(config, root):
+    wallet = pearl_wallet_address(config)
+    return pearl_account_source(config, root, "payouts", "https://pool.kryptex.com/prl/api/v1/miner/payouts/",
+                                lambda data: parse_pearl_payouts(data, wallet))
+
+
+def parse_pearl_paid(data):
+    paid = number(data.get("paid"))
+    if paid is None or paid < 0:
+        raise SourceError("Kryptex did not report a valid total paid amount.")
+    return {"totalPaid": paid}
+
+
+def pearl_paid(config, root):
+    wallet = pearl_wallet_address(config)
+    key = hashlib.sha256(wallet.encode()).hexdigest()
+    result = pearl_source(root / ("pearl-paid-" + key + ".json"), 60,
+                          lambda: parse_pearl_paid(request_json("https://pool.kryptex.com/prl/api/v1/miner/payouts/"
+                                                               + urllib.parse.quote(wallet, safe="") + "/stats")))
+    return {"totalPaid": result["totalPaid"]}
+
+
+def parse_pearl_chain_status(data):
+    book, backend = data.get("blockbook"), data.get("backend")
+    if (not isinstance(book, dict) or not isinstance(backend, dict) or book.get("coin") != "Pearl"
+            or backend.get("chain") != "mainnet" or book.get("inSync") is not True
+            or book.get("initialSync") is not False or book.get("decimals") != 8):
+        raise SourceError("Pearl's explorer is not synchronized with mainnet.")
+    updated = timestamp(book.get("lastBlockTime"))
+    if updated is None or not -60 <= time.time() - updated < 1800:
+        raise SourceError("Pearl's explorer has not reported a recent block.")
+    return {"blockUpdatedAt": updated}
+
+
+def parse_pearl_wallet(data, wallet):
+    raw = data.get("balance")
+    if data.get("address") != wallet or not isinstance(raw, str) or not re.fullmatch(r"[0-9]{1,19}", raw):
+        raise SourceError("Pearl's explorer did not report a valid wallet balance.")
+    # Blockbook amounts are integer base units; mainnet advertises 8 decimals.
+    return {"walletBalance": int(raw) / 100_000_000}
+
+
+def pearl_wallet(config, root):
+    wallet = pearl_wallet_address(config)
+    key = hashlib.sha256(wallet.encode()).hexdigest()
+
+    def load():
+        status = pearl_source(root / "pearl-chain.json", 60,
+                              lambda: parse_pearl_chain_status(request_json("https://blockbook.pearlresearch.ai/api/v2")))
+        if time.time() - status["blockUpdatedAt"] >= 1800:
+            raise SourceError("Pearl's explorer has not reported a recent block.")
+        data = request_json("https://blockbook.pearlresearch.ai/api/v2/address/"
+                            + urllib.parse.quote(wallet, safe="") + "?details=basic")
+        return parse_pearl_wallet(data, wallet)
+
+    result = pearl_source(root / ("pearl-wallet-" + key + ".json"), 60, load)
+    return {"walletBalance": result["walletBalance"]}
+
+
+def fetch_pearl(config, root):
+    metrics, errors, results = {}, [], {}
+    loaders = {"Price": lambda: pearl_price(root), "Hashrate": lambda: pearl_workers(config, root),
+               "Pool yield": lambda: pearl_pool(root), "Wallet balance": lambda: pearl_wallet(config, root),
+               "Pool balance": lambda: pearl_balance(config, root), "Payout history": lambda: pearl_payouts(config, root),
+               "Total paid": lambda: pearl_paid(config, root)}
+    # Independent requests keep an explorer outage from erasing healthy pool/mining data
+    # and bound refresh duration below the app's collector watchdog.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(loaders)) as pool:
+        jobs = {name: pool.submit(loader) for name, loader in loaders.items()}
+        for name, job in jobs.items():
+            try:
+                results[name] = job.result()
+            except SourceError as exc:
+                errors.append(name + ": " + str(exc))
+    if price := results.get("Price"):
+        metrics.update(priceUSD=price["priceUSD"], priceUpdatedAt=price["updatedAt"])
+    workers = results.get("Hashrate", {})
+    supports_pps = workers.pop("supportsPPS", False)
+    metrics.update(workers)
+    for name in ("Wallet balance", "Pool balance", "Payout history", "Total paid"):
+        metrics.update(results.get(name, {}))
+    if metrics.get("hashrate") is not None:
+        try:
+            if not supports_pps:
+                raise SourceError("Profit projections require Kryptex PPS+ workers.")
+            if pool := results.get("Pool yield"):
+                coins, pool_fee = pearl_yield(pool, metrics["hashrate"])
+                metrics.update(coinsPerDay=coins, poolFeePercent=pool_fee)
+        except SourceError as exc:
+            errors.append(str(exc))
+    result = {"pearl": metrics}
+    if errors:
+        result.update(status="partial", error=" ".join(errors))
+    return result
+
+
+def collect(provider, force=False, provided=None, cache_dir=None, currency="USD", utilization_days=None, config=None, device_tokens=None):
     root = Path(cache_dir) if cache_dir is not None else APP_SUPPORT / "Cache"
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     cache_path = root / (provider + ".json")
@@ -625,6 +1017,15 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
             old = json.loads(cache_path.read_text())
         except (OSError, ValueError):
             pass
+        config = config or {}
+        device_tokens = device_tokens or {}
+        # Never reuse one device/endpoint's readings after editing its connection. Only a digest
+        # goes to disk, not the config, URLs, tokens or wallet addresses.
+        config_key = hashlib.sha256(json.dumps([config, device_tokens, currency, utilization_days], sort_keys=True).encode()).hexdigest()
+        if provider == "pearl":
+            config_key = "kryptex-wallet-v1:" + config_key
+        if provider in ("pearl", "power") and old.get("configKey") != config_key:
+            old = {}
         retry = number(old.get("nextRetryAt")) or 0
         last_attempt = number(old.get("checkedAt")) or 0
         # Manual refresh also respects server backoff and Claude's 5-minute minimum.
@@ -635,7 +1036,8 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
         base = {"id": provider, "name": NAMES[provider], "source": SOURCES[provider], "url": LINKS[provider], "checkedAt": now}
         try:
             loaders = {"codex": lambda: parse_codex(codex_rpc()), "claude": fetch_claude, "cursor": fetch_cursor,
-                       "vast": lambda: fetch_vast(provided, utilization_days, old)}
+                       "vast": lambda: fetch_vast(provided, utilization_days, old),
+                       "pearl": lambda: fetch_pearl(config, root), "power": lambda: fetch_power(config, device_tokens)}
             result = {**base, "status": "ok", "updatedAt": now, **loaders[provider]()}
         except Exception as exc:
             if isinstance(exc, SourceError):
@@ -648,11 +1050,14 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
             previous = old if age < 86400 else {}
             result = {**previous, **base, "status": "stale" if previous.get("updatedAt") else "disconnected" if auth else "error",
                       "error": message, "nextRetryAt": now + delay}
-        if provider == "vast" and currency != "USD":
-            rates = exchange_rate(root, currency)
+        if provider in ("vast", "pearl", "power"):
+            # Always fetch EUR: the tariff and revenue can have different currencies.
+            rates = exchange_rate(root, "EUR")
             if rates:
                 result["rates"] = rates["rates"]
                 result["ratesDate"] = rates.get("date")
+        if provider in ("pearl", "power"):
+            result["configKey"] = config_key
         private_write(cache_path, result)
         return result
 
@@ -666,11 +1071,13 @@ def main():
     parser.add_argument("--currency", default="USD")
     parser.add_argument("--utilization-days", type=int, default=None)
     args = parser.parse_args()
-    credential = None
+    credential, payload = None, {}
     if args.credential_stdin:
         try:
-            credential = json.loads(sys.stdin.read(16384)).get("vastKey")
-        except ValueError:
+            payload = json.loads(sys.stdin.read(262144))
+            credential = payload.get("vastKey")
+        except (ValueError, AttributeError):
+            payload = {}
             pass
     if args.validate_vast_key:
         try:
@@ -681,10 +1088,12 @@ def main():
         return
     if args.provider == "all":
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-            rows = list(pool.map(lambda p: collect(p, args.force, credential, currency=args.currency, utilization_days=args.utilization_days), NAMES))
+            rows = list(pool.map(lambda p: collect(p, args.force, credential, currency=args.currency, utilization_days=args.utilization_days,
+                                                config=payload.get(p), device_tokens=payload.get("deviceTokens")), NAMES))
         print(json.dumps({"providers": rows}, allow_nan=False))
     else:
-        print(json.dumps(collect(args.provider, args.force, credential, currency=args.currency, utilization_days=args.utilization_days), allow_nan=False))
+        print(json.dumps(collect(args.provider, args.force, credential, currency=args.currency, utilization_days=args.utilization_days,
+                                 config=payload.get(args.provider), device_tokens=payload.get("deviceTokens")), allow_nan=False))
 
 
 if __name__ == "__main__":

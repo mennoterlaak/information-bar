@@ -78,6 +78,8 @@ struct Provider: Decodable, Identifiable {
   let ratesDate: String?
   let utilizationDays: Int?
   let utilizationError: String?
+  let pearl: PearlMetrics?
+  let powerDevices: [PowerReading]?
 
   static func placeholder(_ id: String) -> Provider {
     let data = Data(

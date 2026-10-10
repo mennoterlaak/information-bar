@@ -56,18 +56,80 @@ enum DemoData {
         ],
       ],
     ])
+    result["pearl"] = decode([
+      "id": "pearl", "name": "Pearl", "status": "ok", "updatedAt": now,
+      "url": "https://pool.kryptex.com/prl", "rates": ["EUR": 0.86],
+      "pearl": [
+        "priceUSD": 1.11, "priceUpdatedAt": now, "hashrate": 321.6e12,
+        "hashrate3h": 328.6e12, "hashrate24h": 316.4e12,
+        "onlineWorkers": 1, "workerCount": 1, "coinsPerDay": 6.47, "poolFeePercent": 2,
+        "walletBalance": 7.63170958, "poolBalance": 2.70568857,
+        "poolConfirmed": 0.78614168, "poolUnconfirmed": 1.91954689,
+        "payoutThreshold": 1, "totalPaid": 8.63170958, "payoutCount": 7,
+        "payouts": [
+          ["id": "demo-paid", "date": now - 3600, "amount": 1.09738591, "status": "Paid"],
+          ["id": "demo-pending", "date": now - 60, "amount": 1.02, "status": "Pending"],
+        ],
+      ],
+    ])
+    result["power"] = decode([
+      "id": "power", "name": "Power", "status": "ok", "updatedAt": now, "rates": ["EUR": 0.86],
+      "powerDevices": [
+        ["id": "demo-miner", "name": "Mining PC", "watts": 448, "status": "ok", "updatedAt": now],
+        ["id": "demo-house", "name": "House P1", "watts": 1240, "status": "ok", "updatedAt": now],
+        ["id": "demo-vast", "name": "Vast hosts", "watts": 750, "status": "ok", "updatedAt": now],
+      ],
+    ])
     return result
   }
 
-  /// Defaults plus a configured Vast.ai pane: a power price, wattages and both earnings columns.
+  /// Defaults plus a shared tariff, synthetic meters and both Vast.ai earnings columns.
   static func preferences() -> AppPreferences {
     var preferences = AppPreferences()
     var vast = ProviderPreferences.defaults(for: .vast)
-    vast.powerPrice = 0.30
-    vast.machineWatts = ["1": 450, "2": 300]
     vast.earningsView = .both
     preferences.providers["vast"] = vast
+    preferences.power.pricePerKWh = 0.21
+    preferences.power.currency = "EUR"
+    preferences.power.devices = [
+      HomeWizardDevice(
+        id: "demo-miner", name: "Mining PC", address: "192.168.1.20",
+        serial: "000000000001", assignment: .pearl),
+      HomeWizardDevice(id: "demo-house", name: "House P1", address: "192.168.1.21"),
+      HomeWizardDevice(
+        id: "demo-vast", name: "Vast hosts", address: "192.168.1.22", assignment: .vast),
+    ]
+    preferences.pearl.walletAddress = "prl1" + String(repeating: "x", count: 59)
+    preferences.pearl.workerName = "rtx4090"
+    var pearl = ProviderPreferences.defaults(for: .pearl)
+    pearl.currency = "EUR"
+    pearl.elements += [MenuElement(.profitDaily)]
+    preferences.providers["pearl"] = pearl
     return preferences
+  }
+
+  static func discoveredMeters() -> [DiscoveredHomeWizard] {
+    [
+      DiscoveredHomeWizard(
+        type: "_hwenergy._tcp.", host: "socket-demo.local.", port: 80,
+        txt: [
+          "serial": "000000000001", "product_name": "Energy Socket", "product_type": "HWE-SKT",
+          "path": "/api/v1", "api_enabled": "1",
+        ], addresses: ["192.168.1.20"]),
+      DiscoveredHomeWizard(
+        type: "_hwenergy._tcp.", host: "spare-socket-demo.local.", port: 80,
+        txt: [
+          "serial": "000000000003", "product_name": "Energy Socket", "product_type": "HWE-SKT",
+          "path": "/api/v1", "api_enabled": "0",
+        ], addresses: ["192.168.1.23"]),
+      DiscoveredHomeWizard(
+        type: "_homewizard._tcp.", host: "p1-demo.local.", port: 443,
+        txt: [
+          "serial": "000000000004", "product_name": "P1 Meter", "product_type": "HWE-P1",
+          "id": "appliance/p1dongle/000000000004", "api_version": "2.3.0",
+        ],
+        addresses: ["192.168.1.24"]),
+    ].compactMap { $0 }
   }
 
   private static func decode(_ raw: [String: Any]) -> Provider {

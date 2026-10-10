@@ -185,7 +185,13 @@ struct ProviderPanel: View {
       header
       MenuSeparator()
       if category == .vast {
-        VastMenu(provider: provider, options: options, style: store.preferences.gaugeStyle)
+        VastMenu(
+          provider: provider, options: options, power: store.powerContext,
+          style: store.preferences.gaugeStyle)
+      } else if category == .pearl {
+        PearlMenu(provider: provider, options: options, power: store.powerContext)
+      } else if category == .power {
+        PowerMenu(power: store.powerContext)
       } else {
         allowances
       }
@@ -199,7 +205,11 @@ struct ProviderPanel: View {
       }
       if let url = provider.url.flatMap(URL.init(string:)) {
         MenuAction(
-          title: category == .vast ? "Open Vast.ai console" : "Open \(category.name) usage page",
+          title: category == .vast
+            ? "Open Vast.ai console"
+            : category == .pearl
+              ? "Open Pearl pool"
+              : category == .power ? "HomeWizard setup guide" : "Open \(category.name) usage page",
           systemImage: "arrow.up.right"
         ) {
           NSWorkspace.shared.open(url)
@@ -231,7 +241,8 @@ struct ProviderPanel: View {
         Text("GPU hosting").font(.system(size: 13)).foregroundStyle(.secondary)
       }
       if provider.status == "loading" && store.collectorErrors[id] == nil {
-        Text("Reading account…").font(.system(size: 13)).foregroundStyle(.secondary)
+        Text(category.isSubscription || category == .vast ? "Reading account…" : "Reading metrics…")
+          .font(.system(size: 13)).foregroundStyle(.secondary)
       }
       ForEach(problems, id: \.self) { message in
         Text(message).font(.system(size: 12)).foregroundStyle(.orange)
@@ -363,17 +374,20 @@ func resetClock(_ date: Date) -> String {
 struct VastMenu: View {
   let provider: Provider
   let options: ProviderPreferences
+  var power = PowerContext.empty
   var style = GaugeStyle.ring
   private var utc: TimeZone { TimeZone(secondsFromGMT: 0)! }
   private var machines: [Machine] { provider.machines ?? [] }
   private var money: MoneyFormat { MoneyFormat(currency: options.currency, rates: provider.rates) }
 
-  private var figures: EarningsFigures { provider.earnings(options) }
+  private var figures: EarningsFigures { provider.earnings(options, power: power) }
   /// Both columns only when net figures exist; otherwise the single column that applies.
   private var columns: [(String, EarningsFigures.Set)] {
     switch (options.earningsView, figures.net) {
     case (.both, .some(let net)): return [("Gross", figures.gross), ("Net", net)]
     case (.net, .some(let net)): return [("Net", net)]
+    case (.net, .none): return [("Net", figures.shown(.net))]
+    case (.both, .none): return [("Gross", figures.gross), ("Net", figures.shown(.net))]
     default: return [("Gross", figures.gross)]
     }
   }
@@ -391,13 +405,15 @@ struct VastMenu: View {
         MachineRow(
           machine: machine, fresh: provider.isFresh, detailed: options.showMachineDetails,
           money: money, period: options.utilizationPeriod,
-          periodDays: provider.utilizationDays, watts: options.machineWatts[machine.id],
-          powerPrice: options.powerPrice, style: style)
+          periodDays: provider.utilizationDays, style: style)
       }
       if provider.machines == nil && provider.status != "loading" {
         menuNote("Add your Vast.ai API key in Settings to see rentals and earnings.")
       } else if machines.isEmpty && provider.machines != nil {
         menuNote("No host machines found.")
+      }
+      if options.earningsView != .gross && figures.net == nil {
+        menuNote("Net earnings need an electricity tariff and current power in Power Settings.")
       }
       if options.showEarningsHistory, let daily = provider.daily, !daily.isEmpty {
         MenuSeparator()
@@ -456,7 +472,9 @@ struct VastMenu: View {
           if columns.count > 1 { Text("") }
           Text("-" + money.local(power) + "/day").font(.system(size: 13)).monospacedDigit()
             .foregroundStyle(.secondary)
-            .help("Entered watts × 24 h × price per kWh, summed over machines.")
+            .help(
+              "Assigned power × 24 h × tariff. An estimate at the current draw, not a historical meter reading."
+            )
         }
       }
     }
@@ -470,7 +488,7 @@ struct VastMenu: View {
 
   private var columnHelp: String {
     options.earningsView != .gross && figures.net == nil
-      ? "Set an electricity price and wattages in Settings to show net figures." : ""
+      ? "Set a tariff and assign power in Power Settings to show net figures." : ""
   }
 
   private func earningsRow(
@@ -504,8 +522,6 @@ struct MachineRow: View {
   let money: MoneyFormat
   let period: UtilizationPeriod
   let periodDays: Int?
-  let watts: Double?
-  let powerPrice: Double?
   var style = GaugeStyle.ring
   private var rented: Bool { fresh && machine.status == "Rented" }
   /// The ring shows the period the collector reported, which can trail a settings change.
@@ -624,11 +640,6 @@ struct MachineRow: View {
     }
     if let price = machine.listedHourly {
       lines.append("Listed price: " + money.format(price) + "/GPU/h")
-    }
-    if let watts, let powerPrice, powerPrice > 0 {
-      lines.append(
-        String(format: "Power: %.0f W ≈ ", watts) + money.local(watts * 24 / 1000 * powerPrice)
-          + "/day")
     }
     lines.append("\(count(machine.running)) running · \(count(machine.stored)) resident")
     if let verification = machine.verification { lines.append("Verification: " + verification) }
