@@ -16,6 +16,8 @@ extension Color {
     case "codex": return .codex
     case "claude": return .claude
     case "cursor": return .cursor
+    case "pearl": return Color(red: 0.47, green: 0.35, blue: 0.80)
+    case "power": return Color(red: 0.22, green: 0.57, blue: 0.43)
     default: return .vast
     }
   }

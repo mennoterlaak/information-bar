@@ -8,15 +8,15 @@ enum CredentialStore {
   static let service = "dev.starecat.InformationBar"
   static let account = "vastai-api-key"
 
-  static var query: [String: Any] {
+  static func query(_ account: String) -> [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service, kSecAttrAccount as String: account,
     ]
   }
 
-  static func read() -> String? {
-    var query = self.query
+  static func read(account: String = account) -> String? {
+    var query = self.query(account)
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
@@ -26,7 +26,8 @@ enum CredentialStore {
     return String(data: data, encoding: .utf8)
   }
 
-  static func save(_ key: String) throws {
+  static func save(_ key: String, account: String = account) throws {
+    let query = self.query(account)
     let data = Data(key.utf8)
     let status = SecItemUpdate(
       query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
@@ -42,6 +43,8 @@ enum CredentialStore {
       throw AppError.message("macOS could not update the key in Keychain (\(status)).")
     }
   }
+
+  static func delete(account: String) { SecItemDelete(query(account) as CFDictionary) }
 }
 
 enum AppError: LocalizedError {
@@ -81,7 +84,9 @@ enum AppInfo {
 }
 
 enum Collector {
-  static func run(arguments: [String], key: String? = nil) throws -> Data {
+  static func run(arguments: [String], key: String? = nil, configuration: Data? = nil) throws
+    -> Data
+  {
     let manager = FileManager.default
     let candidates = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
     guard let python = candidates.first(where: { manager.isExecutableFile(atPath: $0) }) else {
@@ -106,7 +111,10 @@ enum Collector {
     process.standardOutput = output
     process.standardError = FileHandle.nullDevice
     try process.run()
-    let payload = try JSONSerialization.data(withJSONObject: key.map { ["vastKey": $0] } ?? [:])
+    var values =
+      configuration.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    if let key { values["vastKey"] = key }
+    let payload = try JSONSerialization.data(withJSONObject: values)
     try input.fileHandleForWriting.write(contentsOf: payload)
     try input.fileHandleForWriting.close()
     // All network/CLI calls also have their own, shorter timeouts.
@@ -155,6 +163,11 @@ final class DashboardStore: ObservableObject {
   private var lastRefresh = Date.distantPast
   private var wakeObserver: NSObjectProtocol?
   private let defaults: UserDefaults
+  private var generations: [String: Int] = [:]
+
+  var powerContext: PowerContext {
+    PowerContext(preferences: preferences.power, provider: providers["power"])
+  }
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
@@ -174,6 +187,75 @@ final class DashboardStore: ObservableObject {
     preferences.providers[category.rawValue] = item
     persistPreferences()
     if item.enabled { refresh(only: category.rawValue) }
+  }
+
+  func updatePearl(_ change: (inout PearlPreferences) -> Void) {
+    change(&preferences.pearl)
+    persistPreferences()
+    invalidate("pearl")
+  }
+
+  func updatePower(_ change: (inout PowerPreferences) -> Void) {
+    let oldDevices = preferences.power.devices
+    change(&preferences.power)
+    persistPreferences()
+    if oldDevices != preferences.power.devices { invalidate("power") }
+  }
+
+  private func invalidate(_ id: String) {
+    generations[id, default: 0] += 1
+    providers[id] = .placeholder(id)
+    refresh(force: true, only: id)
+  }
+
+  func saveDevice(_ device: HomeWizardDevice, token: String) throws {
+    if let error = device.validationError { throw AppError.message(error) }
+    if preferences.power.alreadyContains(device) {
+      throw AppError.message("This meter is already configured. Edit the existing meter instead.")
+    }
+    if !demo && !token.isEmpty && device.apiVersion == "v2" {
+      try CredentialStore.save(
+        token.trimmingCharacters(in: .whitespacesAndNewlines), account: device.credentialAccount)
+    }
+    if device.apiVersion == "v2" && !demo
+      && CredentialStore.read(account: device.credentialAccount) == nil
+    {
+      throw AppError.message("Enter the HomeWizard API token for this device.")
+    }
+    updatePower { power in
+      if let index = power.devices.firstIndex(where: { $0.id == device.id }) {
+        power.devices[index] = device
+      } else {
+        power.devices.append(device)
+      }
+    }
+    // A replaced token needs a refresh even if no other field changed.
+    if !token.isEmpty { invalidate("power") }
+  }
+
+  func removeDevice(_ device: HomeWizardDevice) {
+    if !demo { CredentialStore.delete(account: device.credentialAccount) }
+    updatePower {
+      $0.devices.removeAll { $0.id == device.id }
+      if $0.displayDeviceID == device.id { $0.displayDeviceID = nil }
+    }
+  }
+
+  private func collectorConfiguration(_ id: String) throws -> Data? {
+    if id == "pearl" {
+      return try JSONEncoder().encode(["pearl": preferences.pearl])
+    }
+    if id == "power" {
+      var tokens: [String: String] = [:]
+      for device in preferences.power.devices where device.apiVersion == "v2" {
+        if let token = CredentialStore.read(account: device.credentialAccount) {
+          tokens[device.id] = token
+        }
+      }
+      let config = try JSONSerialization.jsonObject(with: JSONEncoder().encode(preferences.power))
+      return try JSONSerialization.data(withJSONObject: ["power": config, "deviceTokens": tokens])
+    }
+    return nil
   }
 
   func setTheme(_ value: AppTheme) {
@@ -200,7 +282,7 @@ final class DashboardStore: ObservableObject {
   }
 
   func start() {
-    keyConnected = demo || CredentialStore.read() != nil
+    keyConnected = demo
     refresh()
     timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
       Task { @MainActor in
@@ -224,12 +306,23 @@ final class DashboardStore: ObservableObject {
     if only == nil { lastRefresh = Date() }
     for id in only.map({ [$0] }) ?? ProviderCategory.allCases.map(\.rawValue)
     where !refreshing.contains(id) {
+      // Hidden Vast hosting should not prompt for its key or block unrelated providers at launch.
+      // Explicit refreshes from Vast settings still read the saved key.
+      if id == "vast", only == nil, !preferences.provider(.vast).enabled { continue }
       refreshing.insert(id)
       collectorErrors[id] = nil
       let key = id == "vast" ? CredentialStore.read() : nil
+      if id == "vast" { keyConnected = key != nil }
+      let generation = generations[id, default: 0]
+      let configuration: Data?
+      do { configuration = try collectorConfiguration(id) } catch {
+        collectorErrors[id] = "Could not read the connection settings."
+        refreshing.remove(id)
+        continue
+      }
       var arguments = ["--provider", id] + (force ? ["--force"] : [])
-      if id == "vast" {
-        let vast = preferences.provider(.vast)
+      if id == "vast" || id == "pearl" {
+        let vast = preferences.provider(ProviderCategory(rawValue: id)!)
         arguments += [
           "--currency", vast.currency, "--utilization-days", String(vast.utilizationPeriod.days),
         ]
@@ -237,14 +330,19 @@ final class DashboardStore: ObservableObject {
       Task {
         do {
           let data = try await Task.detached(priority: .utility) {
-            try Collector.run(arguments: arguments, key: key)
+            try Collector.run(arguments: arguments, key: key, configuration: configuration)
           }.value
-          providers[id] = try JSONDecoder().decode(Provider.self, from: data)
+          if generations[id, default: 0] == generation {
+            providers[id] = try JSONDecoder().decode(Provider.self, from: data)
+          }
         } catch {
-          collectorErrors[id] = error.localizedDescription
+          if generations[id, default: 0] == generation {
+            collectorErrors[id] = error.localizedDescription
+          }
         }
         refreshing.remove(id)
         onUpdate?()
+        if generations[id, default: 0] != generation { refresh(force: true, only: id) }
       }
     }
   }

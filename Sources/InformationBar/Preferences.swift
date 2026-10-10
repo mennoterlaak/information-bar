@@ -1,7 +1,7 @@
 import Foundation
 
 enum ProviderCategory: String, CaseIterable, Codable, Identifiable {
-  case codex, claude, cursor, vast
+  case codex, claude, cursor, vast, pearl, power
   var id: String { rawValue }
   var name: String {
     switch self {
@@ -9,9 +9,19 @@ enum ProviderCategory: String, CaseIterable, Codable, Identifiable {
     case .claude: return "Claude"
     case .cursor: return "Cursor"
     case .vast: return "Vast.ai"
+    case .pearl: return "Pearl"
+    case .power: return "Power"
     }
   }
-  var subtitle: String { self == .vast ? "GPU rentals & earnings" : "Subscription usage & resets" }
+  var isSubscription: Bool { [.codex, .claude, .cursor].contains(self) }
+  var subtitle: String {
+    switch self {
+    case .vast: return "GPU rentals & earnings"
+    case .pearl: return "Mining, price & profit projections"
+    case .power: return "HomeWizard meters & electricity costs"
+    default: return "Subscription usage & resets"
+    }
+  }
 }
 
 /// Legacy layout of older preferences, migrated to elements on load.
@@ -91,11 +101,21 @@ enum EarningsView: String, CaseIterable, Codable {
 /// One building block of a menu bar item, composed like iStat Menus: icon, values, rings, graphs.
 enum MenuElementKind: String, Codable, CaseIterable {
   case icon, used, remaining, reset, ring, rentals, today, hourly, utilization, earningsGraph
+  case tokenPrice, hashrate, profitHourly, profitDaily, profitWeekly, profitMonthly, watts,
+    powerCost
+  case walletBalance, poolBalance, totalPaid
 
   static func available(for category: ProviderCategory) -> [MenuElementKind] {
-    category == .vast
-      ? [.icon, .rentals, .today, .hourly, .utilization, .ring, .earningsGraph]
-      : [.icon, .used, .remaining, .reset, .ring]
+    switch category {
+    case .vast: return [.icon, .rentals, .today, .hourly, .utilization, .ring, .earningsGraph]
+    case .pearl:
+      return [
+        .icon, .tokenPrice, .hashrate, .profitHourly, .profitDaily, .profitWeekly, .profitMonthly,
+        .walletBalance, .poolBalance, .totalPaid,
+      ]
+    case .power: return [.icon, .watts, .powerCost]
+    default: return [.icon, .used, .remaining, .reset, .ring]
+    }
   }
 
   func title(for category: ProviderCategory) -> String {
@@ -110,6 +130,17 @@ enum MenuElementKind: String, Codable, CaseIterable {
     case .hourly: return "Estimated GPU rate / hour"
     case .utilization: return "Utilization percentage"
     case .earningsGraph: return "7-day earnings graph"
+    case .tokenPrice: return "PRL token price"
+    case .hashrate: return "Mining hashrate"
+    case .walletBalance: return "Wallet balance (PRL)"
+    case .poolBalance: return "Unpaid pool rewards (PRL)"
+    case .totalPaid: return "Total paid by pool (PRL)"
+    case .profitHourly: return "Projected profit / hour"
+    case .profitDaily: return "Projected profit / day"
+    case .profitWeekly: return "Projected profit / week"
+    case .profitMonthly: return "Projected profit / month (30 days)"
+    case .watts: return "Current power draw"
+    case .powerCost: return "Projected power cost / day"
     }
   }
 
@@ -125,12 +156,20 @@ enum MenuElementKind: String, Codable, CaseIterable {
     case .hourly: return "clock.arrow.circlepath"
     case .utilization: return "speedometer"
     case .earningsGraph: return "chart.bar"
+    case .tokenPrice: return "dollarsign.circle"
+    case .hashrate: return "speedometer"
+    case .walletBalance: return "wallet.pass"
+    case .poolBalance: return "hourglass"
+    case .totalPaid: return "arrow.down.circle"
+    case .profitHourly, .profitDaily, .profitWeekly, .profitMonthly:
+      return "chart.line.uptrend.xyaxis"
+    case .watts, .powerCost: return "bolt"
     }
   }
 
   /// Elements that follow one allowance pool and can carry its short name.
   func usesPool(for category: ProviderCategory) -> Bool {
-    category != .vast && [.used, .remaining, .reset, .ring].contains(self)
+    category.isSubscription && [.used, .remaining, .reset, .ring].contains(self)
   }
 
   var isText: Bool { ![.icon, .ring, .earningsGraph].contains(self) }
@@ -167,18 +206,14 @@ struct ProviderPreferences: Codable, Equatable {
   var showResetDates = true
   var showEarningsHistory = true
   var showMachineDetails = true
-  // Vast.ai only
+  // Revenue display currency; the electricity tariff has its own currency in Power Settings.
   var currency = "USD"
-  /// Electricity price per kWh in the display currency.
-  var powerPrice: Double?
-  /// Average draw in watts per machine id, entered by the user.
-  var machineWatts: [String: Double] = [:]
   var utilizationPeriod = UtilizationPeriod.week
   var earningsView = EarningsView.gross
 
   enum CodingKeys: String, CodingKey {
     case enabled, elements, showAdditional, showResetDates, showEarningsHistory
-    case showMachineDetails, currency, powerPrice, machineWatts, utilizationPeriod, earningsView
+    case showMachineDetails, currency, utilizationPeriod, earningsView
   }
 
   private enum LegacyKeys: String, CodingKey { case style, metric, windowID }
@@ -196,8 +231,6 @@ struct ProviderPreferences: Codable, Equatable {
       try values.decodeIfPresent(Bool.self, forKey: .showEarningsHistory) ?? true
     showMachineDetails = try values.decodeIfPresent(Bool.self, forKey: .showMachineDetails) ?? true
     currency = try values.decodeIfPresent(String.self, forKey: .currency) ?? "USD"
-    powerPrice = try values.decodeIfPresent(Double.self, forKey: .powerPrice)
-    machineWatts = try values.decodeIfPresent([String: Double].self, forKey: .machineWatts) ?? [:]
     utilizationPeriod =
       try values.decodeIfPresent(UtilizationPeriod.self, forKey: .utilizationPeriod) ?? .week
     earningsView = try values.decodeIfPresent(EarningsView.self, forKey: .earningsView) ?? .gross
@@ -224,7 +257,15 @@ struct ProviderPreferences: Codable, Equatable {
 
   static func defaults(for category: ProviderCategory) -> Self {
     var value = Self()
-    value.elements = [MenuElement(.icon), MenuElement(category == .vast ? .rentals : .used)]
+    let kind: MenuElementKind
+    switch category {
+    case .vast: kind = .rentals
+    case .pearl: kind = .tokenPrice
+    case .power: kind = .watts
+    default: kind = .used
+    }
+    value.elements = [MenuElement(.icon), MenuElement(kind)]
+    if category == .pearl { value.elements.append(MenuElement(.hashrate)) }
     return value
   }
 }
@@ -234,8 +275,12 @@ struct AppPreferences: Codable, Equatable {
   var theme = AppTheme.system
   var refreshInterval = 60
   var gaugeStyle = GaugeStyle.ring
+  var pearl = PearlPreferences()
+  var power = PowerPreferences()
 
-  enum CodingKeys: String, CodingKey { case providers, theme, refreshInterval, gaugeStyle }
+  enum CodingKeys: String, CodingKey {
+    case providers, theme, refreshInterval, gaugeStyle, pearl, power
+  }
   private enum LegacyKeys: String, CodingKey { case ringValuesInside }
 
   init() {}
@@ -246,6 +291,20 @@ struct AppPreferences: Codable, Equatable {
       try values.decodeIfPresent([String: ProviderPreferences].self, forKey: .providers) ?? [:]
     theme = try values.decodeIfPresent(AppTheme.self, forKey: .theme) ?? .system
     refreshInterval = try values.decodeIfPresent(Int.self, forKey: .refreshInterval) ?? 60
+    pearl = try values.decodeIfPresent(PearlPreferences.self, forKey: .pearl) ?? .init()
+    if let saved = try values.decodeIfPresent(PowerPreferences.self, forKey: .power) {
+      power = saved
+    } else {
+      // Decode the retired Vast fields only to migrate. New saves contain power in one place.
+      struct LegacyPower: Decodable {
+        let powerPrice: Double?
+        let currency: String?
+      }
+      let legacy = try values.decodeIfPresent([String: LegacyPower].self, forKey: .providers)?[
+        "vast"]
+      power.pricePerKWh = legacy?.powerPrice
+      power.currency = legacy?.currency ?? "USD"
+    }
     if let style = try values.decodeIfPresent(GaugeStyle.self, forKey: .gaugeStyle) {
       gaugeStyle = style
     } else {
@@ -293,17 +352,14 @@ extension Provider {
   }
 
   /// Earnings in the display currency, gross as recorded and net of the entered power cost.
-  func earnings(_ preferences: ProviderPreferences) -> EarningsFigures {
+  func earnings(_ preferences: ProviderPreferences, power: PowerContext = .empty) -> EarningsFigures
+  {
     let money = MoneyFormat(currency: preferences.currency, rates: rates)
     let gross = EarningsFigures.Set(
       today: todayEarnings.map { $0 * money.factor },
       hourly: estimatedHourly.map { $0 * money.factor },
       average: sevenDayAverage.map { $0 * money.factor })
-    var powerPerDay: Double?
-    if let price = preferences.powerPrice, price > 0 {
-      let watts = (machines ?? []).compactMap { preferences.machineWatts[$0.id] }.reduce(0, +)
-      if watts > 0 { powerPerDay = watts * 24 / 1000 * price }
-    }
+    let powerPerDay = power.dailyCost(for: .vast, money: money, rates: rates)
     guard let powerPerDay else { return EarningsFigures(gross: gross, net: nil, powerPerDay: nil) }
     // Today only carries the power used since 00:00 UTC.
     let elapsed = Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 86400) / 86400
@@ -315,7 +371,9 @@ extension Provider {
   }
 
   /// Text for a value element; nil for icon, ring and graph elements. Stale data shows a dash.
-  func text(for element: MenuElement, preferences: ProviderPreferences) -> String? {
+  func text(
+    for element: MenuElement, preferences: ProviderPreferences, power: PowerContext = .empty
+  ) -> String? {
     guard element.kind.isText else { return nil }
     guard isFresh else { return "—" }
     let money = MoneyFormat(currency: preferences.currency, rates: rates)
@@ -323,12 +381,26 @@ extension Provider {
     case .rentals:
       guard let rentedCount, let machineCount else { return "—" }
       return "\(rentedCount)/\(machineCount)"
-    case .today: return money.local(earnings(preferences).shown(preferences.earningsView).today)
+    case .today:
+      return money.local(earnings(preferences, power: power).shown(preferences.earningsView).today)
     case .hourly:
-      return earnings(preferences).shown(preferences.earningsView).hourly.map {
+      return earnings(preferences, power: power).shown(preferences.earningsView).hourly.map {
         money.local($0) + "/h"
       } ?? "—"
     case .utilization: return utilizationAverage.map { String(format: "%.0f%%", $0 * 100) } ?? "—"
+    case .tokenPrice: return money.format(pearl?.priceUSD, digits: 3)
+    case .hashrate: return formatHashrate(pearl?.hashrate)
+    case .walletBalance: return formatPRL(pearl?.walletBalance, digits: 4)
+    case .poolBalance: return formatPRL(pearl?.poolBalance, digits: 4)
+    case .totalPaid: return formatPRL(pearl?.totalPaid, digits: 4)
+    case .profitHourly, .profitDaily, .profitWeekly, .profitMonthly:
+      let period = ProjectionPeriod(element.kind)
+      return pearlProjection(preferences, power: power).netPerDay.map {
+        money.local($0 * period.days) + period.suffix
+      } ?? "—"
+    case .watts: return power.displayWatts.map { String(format: "%.0f W", $0) } ?? "—"
+    case .powerCost:
+      return power.displayCostPerDay.map { power.money.local($0) + "/d" } ?? "—"
     default:
       guard let window = pool(element.windowID) else { return "—" }
       let value: String
@@ -342,8 +414,10 @@ extension Provider {
   }
 
   /// Every text element on one line, for tooltips and accessibility.
-  func menuSummary(_ preferences: ProviderPreferences) -> String {
-    let parts = preferences.elements.compactMap { text(for: $0, preferences: preferences) }
+  func menuSummary(_ preferences: ProviderPreferences, power: PowerContext = .empty) -> String {
+    let parts = preferences.elements.compactMap {
+      text(for: $0, preferences: preferences, power: power)
+    }
     return parts.isEmpty ? displayName : parts.joined(separator: " · ")
   }
 }
@@ -360,7 +434,9 @@ struct EarningsFigures {
   let powerPerDay: Double?
 
   /// Figures for a single-value context such as the menu bar: net when asked and available.
-  func shown(_ view: EarningsView) -> Set { view == .net ? (net ?? gross) : gross }
+  func shown(_ view: EarningsView) -> Set {
+    view == .net ? (net ?? Set(today: nil, hourly: nil, average: nil)) : gross
+  }
 }
 
 extension UsageWindow {

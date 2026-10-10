@@ -1,6 +1,6 @@
 # Data sources
 
-Checked 9 September 2026. The collector is deliberately read-only.
+AI/Vast sources checked 9 September 2026; HomeWizard added 2 October 2026; Pearl pool workers verified 3 October 2026. The collector is deliberately read-only.
 
 ## Codex
 
@@ -36,13 +36,38 @@ Per-machine utilization uses the documented [machine earnings endpoint](https://
 
 Browser session credentials are never read or stored.
 
+## Pearl
+
+Hashrate comes directly from `GET https://pool.kryptex.com/prl/api/v3/miner/workers/{address}`, using the configured public mining wallet and optional exact worker name. The live response's `results` contain `avg_hashrate_30m`, `avg_hashrate_3h`, and `avg_hashrate_24h` in H/s, often encoded as numeric strings. The bar and projections use the 30-minute accepted average; the dropdown also shows the longer averages and the number of online workers. An explicit offline status contributes zero to the current rate; historical averages stay visible. Missing workers, malformed rates, incomplete responses and API failures remain unavailable rather than zero. No local miner API or adapter is used.
+
+Price uses `GET https://api.coingecko.com/api/v3/simple/price?ids=pearl-2&vs_currencies=usd&include_last_updated_at=true`. The asset is Pearl Research, not another PRL token. Quotes are cached for two minutes and rejected if their provider timestamp is over 15 minutes old. The pool source is `GET https://pool.kryptex.com/prl/api/v1/pool/info`: `estimated_profit_day` is base PRL per H/s per day; `fee` is the pool fee fraction. The pool fee is deducted once; accepted hashrate already excludes shares submitted to the developer's fee wallet. Projections require PPS+ workers. See the [projection formula](pearl-pool.md#projection-definitions).
+
+Sources are independent: a failed price request does not erase hashrate; a failed power reading never turns gross revenue into a number labeled profit. Worker data is cached for 60 seconds per wallet/worker selection, with source-specific backoff. Only normalized metrics and a configuration digest enter the cache; wallet addresses and worker names stay in preferences. Hour/day/week/month correspond to 1/24/168/720 hours. The monthly period is always 30 days.
+
+Wallet balance uses the saved mining address at `https://blockbook.pearlresearch.ai/api/v2/address/{address}?details=basic`, after validating the explorer's synchronized Pearl mainnet status and eight-decimal unit. It shows confirmed holdings at that address, excluding mempool changes. Kryptex's miner `balance` endpoint supplies total/confirmed/unconfirmed unpaid rewards and the confirmed payout threshold. Its `payouts` endpoint supplies the latest five records with pool-reported status and transaction links; `payouts/{address}/stats.paid` supplies the all-time payout total. These figures are wallet-wide and independent of the selected worker. See [wallet balance and payouts](pearl-pool.md#wallet-balance-and-payouts) for source contracts and proof boundaries. Failures do not replace missing balances with zero or missing history with an empty list.
+
+## Power and HomeWizard
+
+Power has its own settings, menu item and collector. Multiple meters can use the [HomeWizard local API](https://api-documentation.homewizard.com/docs/getting-started/):
+
+- v1: `GET http://device/api/v1/data`, reading `active_power_w`. Enable Local API in the HomeWizard app.
+- v2: `GET https://device/api/measurement`, reading `power_w`, with `X-Api-Version: 2` and a device-specific bearer token kept in Keychain.
+
+For v2, the app validates TLS against the [official HomeWizard public CA](https://api-documentation.homewizard.com/docs/v2/authorization/#certificate), bundled as `scripts/homewizard-ca.pem`. It verifies the certificate name `appliance/<product type>/<serial>` rather than the device IP. Certificate checking is never disabled. Local connections resolve and validate the destination IP once, connect directly (without HTTP proxies), and do not follow redirects.
+
+**Search for devices** uses native Bonjour for the [documented HomeWizard services](https://api-documentation.homewizard.com/docs/discovery/): `_hwenergy._tcp` (v1) and `_homewizard._tcp` (v2). A search lasts up to 12 seconds and can be stopped. Resolved service names, ports and TXT records prefill setup; the v2 certificate identity comes from the advertised `id`. Devices advertising both versions appear once, preferring v2. Existing meters are identified by serial number, hostname or resolved IP. Discovery does not add meters, enable an API or create credentials automatically. Watermeters/displays are listed without a power setup action. Search is limited to the local Bonjour network; permit Local Network access in macOS, or add a reachable meter by address.
+
+Each meter is assigned to Pearl, Vast.ai, or monitoring only. Costs require current readings from all meters assigned to that provider. There are no manual wattage entries or fallback estimates. Whole-house P1 meters should normally be monitoring only. Select a specific meter for the Power menu item, or use Assigned loads (excluding monitor-only meters). Do not assign overlapping meters to the same equipment. Negative readings represent export and are displayed as negative watts, but cost projections do not include export credits.
+
+The shared tariff has its own currency. Costs convert into the revenue display currency using the same USD/EUR rate, so changing a provider's currency never reinterprets the tariff. A missing exchange rate leaves net values unavailable. Zero tariffs and zero measured draw are valid; missing values remain unknown. An existing Vast `powerPrice` migrates once with its currency. Old `machineWatts`, `pearlWatts` and `vastMachineWatts` entries are ignored and omitted on the next preferences save. Clearing a migrated tariff does not restore it from the old field.
+
 ## Exchange rates
 
-With Euro selected, the collector reads `GET https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR`, the European Central Bank reference rate, without any credential, and caches it for twelve hours in `rates.json`. A stale cached rate is kept while the service is unreachable; without any rate, amounts stay in USD.
+The revenue and power collectors read `GET https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR`, the European Central Bank reference rate, without any credential, and cache it for twelve hours in `rates.json`. This also supports a EUR tariff with USD revenue. A stale cached rate is kept while the service is unreachable; without any rate, revenue amounts stay in USD and costs that need conversion remain unavailable.
 
 ## Credential boundary
 
-No credential is written to this repository, printed, included in command arguments or stored in the metrics cache. The app saves an explicitly entered Vast key in macOS Keychain and sends it to its collector over a private stdin pipe. Each token is sent only to its provider's fixed HTTPS endpoint. Redirects are disabled to avoid forwarding credentials. Error bodies and local-helper stderr are suppressed; errors shown in the UI are normalized.
+No credential is written to this repository, printed, included in command arguments or stored in the metrics cache. The app saves explicitly entered Vast and HomeWizard keys in separate macOS Keychain entries and sends them to its collector over a private stdin pipe. Cloud tokens go only to fixed provider HTTPS endpoints; each HomeWizard token goes only to its configured local device with certificate verification. Redirects are disabled. Error bodies and local-helper stderr are suppressed; errors shown in the UI are normalized. A configuration digest invalidates Pearl/Power cache data after connection changes without caching URLs or tokens.
 
 This is a local, unsandboxed macOS app because it integrates with installed CLI processes and account stores. Python 3 is a runtime prerequisite. The app bundle is ad-hoc signed for local use; a distribution build would need a stable signing identity and notarization.
 
@@ -52,7 +77,7 @@ The seven-day GPU/storage/network/SLA breakdown is accumulated from the same val
 
 Host details also preserve `earn_day`, `gpu_max_cur_temp` (degrees Celsius), `reliability2` (fraction displayed as a percentage), `cpu_name`, `listed`, and the listed hourly GPU price. Unknown optional fields remain absent. The daily host figure is labeled as Vast-reported earnings; its backend window is not used to calculate the seven-day daily average. Resident container counts include running containers.
 
-The four menu items have independent persistent settings and macOS autosave names for ordering. SVGs are bundled template images. The configuration design follows the independent categories and global/per-item controls in the [official iStat Menus guide](https://register.bjango.com/help/istatmenus7/welcome/).
+The six menu items have independent persistent settings and macOS autosave names for ordering. Provider SVGs are bundled template images; Pearl and Power use system symbols. The configuration design follows the independent categories and global/per-item controls in the [official iStat Menus guide](https://register.bjango.com/help/istatmenus7/welcome/).
 
 ## Earnings definitions
 
@@ -65,12 +90,12 @@ Vast reports USD. With Euro selected, amounts use the European Central Bank refe
 | 7-day average | Total recorded rental earnings over the previous seven complete UTC days ÷ 7. Includes zero-earning days; excludes the incomplete current day. |
 | Rented | Vast reports `current_rentals_running > 0`. Stored-only containers are displayed separately. |
 | Utilization | GPU revenue earned in the ring period ÷ (listed GPU price × GPUs × hours in the period), capped at 100%. Today means today so far in UTC; 7 and 30 days mean the previous complete UTC days. Rentals priced below the listing lower it. |
-| Power cost | Entered watts × 24 h × price per kWh, summed over machines. Net figures deduct it: today for the hours elapsed since 00:00 UTC, the rate per hour, and the 7-day average per day. The Earnings setting shows gross, net or both columns; the menu bar follows net only when Net is selected. |
+| Power cost | Assigned meter watts × 24 h × tariff / 1000. Net figures deduct this estimate: today for the hours elapsed since 00:00 UTC, the rate per hour, and the 7-day average per day. This extrapolates current draw, not historical metered usage. The Earnings setting shows gross, net or both columns; the menu bar follows net only when Net is selected. Missing costs show a dash, never gross labeled as net. |
 
-These are revenue metrics; electricity, hardware, tax and payout costs are not deducted. Hovering a machine row shows Vast's reported hourly average separately from the current price estimate, plus the provider's daily earnings figure, listed price, GPU temperature, reliability and CPU when available. Resident container counts include running containers and must not be added to running counts. The chart covers the previous seven complete UTC days; its tooltip shows the GPU, storage and network split.
+Gross values are revenue before costs; net values subtract estimated electricity only. Hardware, tax and payout costs are not deducted. Hovering a machine row shows Vast's reported hourly average separately from the current price estimate, plus the provider's daily earnings figure, listed price, GPU temperature, reliability and CPU when available. Resident container counts include running containers and must not be added to running counts. The chart covers the previous seven complete UTC days; its tooltip shows the GPU, storage and network split.
 
 ## Refresh and freshness
 
 The ChatGPT item shows Codex subscription allowances using its documented app-server interface. Claude and Cursor use the account endpoints their clients use; these are not stable public APIs. They may require adapter updates when providers change them. Sign in again using each provider's own app when credentials expire; Information Bar does not rotate their tokens or send inference requests.
 
-ChatGPT, Cursor and Vast refresh every minute by default, or every two minutes when configured in General. Claude refreshes at most once every five minutes, including manual refreshes (the two-minute schedule checks it every six minutes). Server backoff is respected; without a server hint, sign-in errors retry after a minute and other provider errors after five. Last successful metrics remain visible with a stale label if a refresh fails, and disappear from the menu bar summary. Cache files contain normalized metrics only and have mode `0600` under `~/Library/Application Support/Information Bar/Cache`.
+ChatGPT, Cursor, Vast, Pearl and Power refresh every minute by default, or every two minutes when configured in General. Disabled Vast is skipped during automatic refreshes, including its Keychain lookup; explicit refreshes from its settings still work. Claude refreshes at most once every five minutes, including manual refreshes (the two-minute schedule checks it every six minutes). Server backoff is respected; without a server hint, sign-in errors retry after a minute and other provider errors after five. Last successful metrics remain visible with a stale label if a refresh fails, and disappear from the menu bar summary. Pearl's independent metrics and each HomeWizard reading become unavailable individually. Hiding the Power item does not stop readings used for revenue calculations. Cache files contain normalized metrics only and have mode `0600` under `~/Library/Application Support/Information Bar/Cache`.

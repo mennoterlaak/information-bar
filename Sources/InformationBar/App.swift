@@ -283,7 +283,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = itemViews[category]
       else { continue }
       let provider = store.providers[category.rawValue] ?? .placeholder(category.rawValue)
-      hosting.rootView = AnyView(MenuBarItemView(provider: provider, options: options))
+      hosting.rootView = AnyView(
+        MenuBarItemView(provider: provider, options: options, power: store.powerContext))
       // macOS pads every status item by about 8pt per side. The content is drawn a little
       // into that margin so neighbouring items sit closer; beyond 8pt it would be clipped.
       let overflow: CGFloat = 3
@@ -291,7 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       let width = max(1, content - 2 * overflow)
       if abs(item.length - width) > 0.5 { item.length = width }
       hosting.frame = NSRect(x: -overflow, y: 0, width: content, height: button.bounds.height)
-      let summary = provider.menuSummary(options)
+      let summary = provider.menuSummary(options, power: store.powerContext)
       button.toolTip = "\(category.name) · \(summary) · \(provider.ageLabel)"
       button.setAccessibilityLabel("\(category.name): \(summary)")
     }

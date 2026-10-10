@@ -18,10 +18,14 @@ struct SettingsView: View {
           Text("General")
         }.tag("global")
         Section {
-          ForEach(ProviderCategory.allCases.filter { $0 != .vast }) { sidebarRow($0) }
+          ForEach(ProviderCategory.allCases.filter(\.isSubscription)) { sidebarRow($0) }
         }
         Section {
           sidebarRow(.vast)
+          sidebarRow(.pearl)
+        }
+        Section {
+          sidebarRow(.power)
         }
       }
       .listStyle(.sidebar)
@@ -414,7 +418,8 @@ struct MenuBarPreview: View {
       ForEach(categories) { item in
         let option = store.preferences.provider(item)
         MenuBarItemView(
-          provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue), options: option
+          provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue), options: option,
+          power: store.powerContext
         ).opacity(option.enabled ? 1 : 0.35)
       }
       if categories.isEmpty {
@@ -567,37 +572,45 @@ struct CategorySettings: View {
       } header: {
         sectionHeader(
           "Menu bar",
-          info: category == .vast
+          info: !category.isSubscription
             ? "Drag rows to reorder the menu bar item; the minus removes an item."
             : "Drag rows to reorder the menu bar item; the minus removes an item. Value items can follow one allowance and carry its short name, as in 5h 68%."
         )
       }
-      Section {
-        if category == .vast {
-          Toggle("7-day earnings chart", isOn: binding(\.showEarningsHistory))
-          Toggle("Machine details line", isOn: binding(\.showMachineDetails))
-        } else {
-          Toggle("Additional allowances", isOn: binding(\.showAdditional))
-          Toggle("Exact reset times", isOn: binding(\.showResetDates))
+      if category.isSubscription || category == .vast {
+        Section {
+          if category == .vast {
+            Toggle("7-day earnings chart", isOn: binding(\.showEarningsHistory))
+            Toggle("Machine details line", isOn: binding(\.showMachineDetails))
+          } else {
+            Toggle("Additional allowances", isOn: binding(\.showAdditional))
+            Toggle("Exact reset times", isOn: binding(\.showResetDates))
+          }
+        } header: {
+          sectionHeader(
+            "Dropdown",
+            info: category == .vast
+              ? "Hover a machine in the dropdown for its reported averages, temperature, reliability and CPU."
+              : "Percentages and reset times are reported by \(category.name).")
         }
-      } header: {
-        sectionHeader(
-          "Dropdown",
-          info: category == .vast
-            ? "Hover a machine in the dropdown for its reported averages, temperature, reliability and CPU."
-            : "Percentages and reset times are reported by \(category.name).")
       }
+      if category == .vast || category == .pearl { currencySettings }
       if category == .vast {
-        currencyAndPower
         utilization
       }
-      connection
+      if category == .pearl {
+        PearlSettingsSections(store: store)
+      } else if category == .power {
+        PowerSettingsSections(store: store)
+      } else {
+        connection
+      }
     }
     .formStyle(.grouped)
     .navigationTitle(category.name)
   }
 
-  private var currencyAndPower: some View {
+  private var currencySettings: some View {
     Section {
       Picker("Currency", selection: binding(\.currency)) {
         Text("US dollar").tag("USD")
@@ -606,25 +619,17 @@ struct CategorySettings: View {
       if options.currency == "EUR" {
         LabeledContent("Exchange rate", value: rateDescription)
       }
-      DecimalField(
-        title: "Electricity price per kWh", value: priceBinding, prompt: "Not set",
-        suffix: options.currency, minimumDigits: 2)
-      ForEach(provider.machines ?? []) { machine in
-        DecimalField(
-          title: "\(machine.gpu) · \(machine.name)", value: wattsBinding(machine.id),
-          prompt: "Average draw", suffix: "W")
+      if category == .vast {
+        Picker("Earnings", selection: binding(\.earningsView)) {
+          ForEach(EarningsView.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
       }
-      if provider.machines?.isEmpty != false {
-        Text("Machines appear here once the account is connected.").foregroundStyle(.secondary)
-      }
-      Picker("Earnings", selection: binding(\.earningsView)) {
-        ForEach(EarningsView.allCases, id: \.self) { Text($0.title).tag($0) }
-      }
+      Button("Configure electricity & meters…") { store.selectedSettings = "power" }
     } header: {
       sectionHeader(
-        "Currency & power",
+        "Earnings",
         info:
-          "Euro amounts use the European Central Bank reference rate via api.frankfurter.dev, refreshed every 12 hours. Power cost is each machine's watts × 24 h × the price per kWh. Net earnings deduct it: today for the hours elapsed since 00:00 UTC, the rate per hour, and the 7-day average per day. Gross shows recorded revenue; Both shows two columns."
+          "Euro amounts use the ECB reference rate. The electricity tariff and meters are managed separately in Power. Pearl profit always deducts mining fees and assigned power costs."
       )
     }
   }
@@ -635,28 +640,6 @@ struct CategorySettings: View {
         + (provider.ratesDate.map { " · ECB \($0)" } ?? "")
     }
     return provider.updatedAt == nil ? "Fetching…" : "Unavailable, amounts stay in USD"
-  }
-
-  private var priceBinding: Binding<Double?> {
-    Binding(
-      get: { options.powerPrice },
-      set: { value in
-        store.update(category) { $0.powerPrice = (value ?? 0) > 0 ? value : nil }
-      })
-  }
-
-  private func wattsBinding(_ id: String) -> Binding<Double?> {
-    Binding(
-      get: { options.machineWatts[id] },
-      set: { value in
-        store.update(category) {
-          if let value, value > 0 {
-            $0.machineWatts[id] = value
-          } else {
-            $0.machineWatts.removeValue(forKey: id)
-          }
-        }
-      })
   }
 
   private var utilization: some View {
