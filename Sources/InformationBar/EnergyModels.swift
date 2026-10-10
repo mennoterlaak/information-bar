@@ -150,7 +150,7 @@ enum ProjectionPeriod: String, CaseIterable, Identifiable {
     case .hour: return "Hourly"
     case .day: return "Daily"
     case .week: return "Weekly"
-    case .month: return "Monthly · 30d"
+    case .month: return "Monthly"
     }
   }
   var days: Double {
@@ -260,13 +260,26 @@ extension Provider {
 }
 
 func formatHashrate(_ value: Double?) -> String {
-  guard let value, value.isFinite, value >= 0 else { return "—" }
+  guard let (number, unit) = hashrateParts(value) else { return "—" }
+  return number + " " + unit
+}
+
+/// Two averages sharing one unit when they can, as in "325.26 · 322.03 TH/s".
+func formatHashrates(_ first: Double?, _ second: Double?) -> String {
+  guard let a = hashrateParts(first), let b = hashrateParts(second), a.1 == b.1 else {
+    return formatHashrate(first) + " · " + formatHashrate(second)
+  }
+  return a.0 + " · " + b.0 + " " + a.1
+}
+
+private func hashrateParts(_ value: Double?) -> (String, String)? {
+  guard let value, value.isFinite, value >= 0 else { return nil }
   for (scale, unit) in [
     (1e18, "EH/s"), (1e15, "PH/s"), (1e12, "TH/s"), (1e9, "GH/s"), (1e6, "MH/s"), (1e3, "KH/s"),
   ] {
-    if value >= scale { return String(format: "%.2f %@", value / scale, unit) }
+    if value >= scale { return (String(format: "%.2f", value / scale), unit) }
   }
-  return String(format: "%.0f H/s", value)
+  return (String(format: "%.0f", value), "H/s")
 }
 
 func formatPRL(_ value: Double?, digits: Int = 8) -> String {

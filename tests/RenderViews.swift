@@ -31,7 +31,7 @@ struct RenderViews {
             .environment(\.colorScheme, scheme),
           to: output.appendingPathComponent("\(category.rawValue)-\(label).png"))
       }
-      for id in ["vast", "pearl", "power"] {
+      for id in ["vast", "pearl", "kraken", "power"] {
         store.selectedSettings = id
         try save(
           SettingsView(store: store).environment(\.colorScheme, scheme),

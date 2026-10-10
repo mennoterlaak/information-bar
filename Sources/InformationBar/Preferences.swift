@@ -1,7 +1,7 @@
 import Foundation
 
 enum ProviderCategory: String, CaseIterable, Codable, Identifiable {
-  case codex, claude, cursor, vast, pearl, power
+  case codex, claude, cursor, vast, pearl, kraken, power
   var id: String { rawValue }
   var name: String {
     switch self {
@@ -10,6 +10,7 @@ enum ProviderCategory: String, CaseIterable, Codable, Identifiable {
     case .cursor: return "Cursor"
     case .vast: return "Vast.ai"
     case .pearl: return "Pearl"
+    case .kraken: return "Kraken"
     case .power: return "Power"
     }
   }
@@ -18,8 +19,9 @@ enum ProviderCategory: String, CaseIterable, Codable, Identifiable {
     switch self {
     case .vast: return "GPU rentals & earnings"
     case .pearl: return "Mining, price & profit projections"
+    case .kraken: return "Spot portfolio & prices"
     case .power: return "HomeWizard meters & electricity costs"
-    default: return "Subscription usage & resets"
+    case .codex, .claude, .cursor: return "Subscription usage & resets"
     }
   }
 }
@@ -104,6 +106,7 @@ enum MenuElementKind: String, Codable, CaseIterable {
   case tokenPrice, hashrate, profitHourly, profitDaily, profitWeekly, profitMonthly, watts,
     powerCost
   case walletBalance, poolBalance, totalPaid
+  case portfolioValue, portfolioChange, assetPrice
 
   static func available(for category: ProviderCategory) -> [MenuElementKind] {
     switch category {
@@ -113,8 +116,9 @@ enum MenuElementKind: String, Codable, CaseIterable {
         .icon, .tokenPrice, .hashrate, .profitHourly, .profitDaily, .profitWeekly, .profitMonthly,
         .walletBalance, .poolBalance, .totalPaid,
       ]
+    case .kraken: return [.icon, .portfolioValue, .portfolioChange, .assetPrice]
     case .power: return [.icon, .watts, .powerCost]
-    default: return [.icon, .used, .remaining, .reset, .ring]
+    case .codex, .claude, .cursor: return [.icon, .used, .remaining, .reset, .ring]
     }
   }
 
@@ -141,6 +145,9 @@ enum MenuElementKind: String, Codable, CaseIterable {
     case .profitMonthly: return "Projected profit / month (30 days)"
     case .watts: return "Current power draw"
     case .powerCost: return "Projected power cost / day"
+    case .portfolioValue: return "Portfolio value"
+    case .portfolioChange: return "Portfolio change today"
+    case .assetPrice: return "Asset price"
     }
   }
 
@@ -164,6 +171,9 @@ enum MenuElementKind: String, Codable, CaseIterable {
     case .profitHourly, .profitDaily, .profitWeekly, .profitMonthly:
       return "chart.line.uptrend.xyaxis"
     case .watts, .powerCost: return "bolt"
+    case .portfolioValue: return "briefcase"
+    case .portfolioChange: return "arrow.up.arrow.down"
+    case .assetPrice: return "tag"
     }
   }
 
@@ -171,6 +181,9 @@ enum MenuElementKind: String, Codable, CaseIterable {
   func usesPool(for category: ProviderCategory) -> Bool {
     category.isSubscription && [.used, .remaining, .reset, .ring].contains(self)
   }
+
+  /// Elements that follow one held asset and can carry its symbol.
+  var usesAsset: Bool { self == .assetPrice }
 
   var isText: Bool { ![.icon, .ring, .earningsGraph].contains(self) }
 }
@@ -180,13 +193,18 @@ struct MenuElement: Codable, Equatable, Identifiable {
   var kind: MenuElementKind
   /// Pool for allowance elements; nil follows the most-used main pool.
   var windowID: String?
-  /// Prefix a value with the pool's short name, as in "5h 68%".
+  /// Prefix a value with the pool's short name or the asset's symbol, as in "5h 68%".
   var showLabel = false
+  /// Asset symbol for price elements; nil follows the largest holding.
+  var asset: String?
 
-  init(_ kind: MenuElementKind, windowID: String? = nil, showLabel: Bool = false) {
+  init(
+    _ kind: MenuElementKind, windowID: String? = nil, showLabel: Bool = false, asset: String? = nil
+  ) {
     self.kind = kind
     self.windowID = windowID
     self.showLabel = showLabel
+    self.asset = asset
   }
 
   init(from decoder: Decoder) throws {
@@ -195,6 +213,7 @@ struct MenuElement: Codable, Equatable, Identifiable {
     kind = try values.decode(MenuElementKind.self, forKey: .kind)
     windowID = try values.decodeIfPresent(String.self, forKey: .windowID)
     showLabel = try values.decodeIfPresent(Bool.self, forKey: .showLabel) ?? false
+    asset = try values.decodeIfPresent(String.self, forKey: .asset)
   }
 }
 
@@ -261,8 +280,9 @@ struct ProviderPreferences: Codable, Equatable {
     switch category {
     case .vast: kind = .rentals
     case .pearl: kind = .tokenPrice
+    case .kraken: kind = .portfolioValue
     case .power: kind = .watts
-    default: kind = .used
+    case .codex, .claude, .cursor: kind = .used
     }
     value.elements = [MenuElement(.icon), MenuElement(kind)]
     if category == .pearl { value.elements.append(MenuElement(.hashrate)) }
@@ -401,7 +421,16 @@ extension Provider {
     case .watts: return power.displayWatts.map { String(format: "%.0f W", $0) } ?? "—"
     case .powerCost:
       return power.displayCostPerDay.map { power.money.local($0) + "/d" } ?? "—"
-    default:
+    case .portfolioValue:
+      guard let kraken, let total = kraken.totalValue else { return "—" }
+      return kraken.money.local(total, digits: total >= 1000 ? 0 : 2)
+    case .portfolioChange:
+      return kraken?.changeFraction.map { formatChange($0, digits: 1) } ?? "—"
+    case .assetPrice:
+      guard let kraken, let asset = kraken.asset(element.asset) else { return "—" }
+      let price = formatPrice(asset.price, money: kraken.money, compact: true)
+      return element.showLabel ? asset.symbol + " " + price : price
+    case .used, .remaining, .reset:
       guard let window = pool(element.windowID) else { return "—" }
       let value: String
       switch element.kind {
@@ -410,6 +439,7 @@ extension Provider {
       default: value = window.percent
       }
       return element.showLabel ? window.shortLabel + " " + value : value
+    case .icon, .ring, .earningsGraph: return nil
     }
   }
 

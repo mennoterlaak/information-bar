@@ -5,12 +5,15 @@ Uses Python's standard library. Credentials never appear in stdout, cache,
 errors, command arguments, or this repository. See docs/data-sources.md.
 """
 import argparse
+import base64
+import binascii
 import concurrent.futures
 import contextlib
 import datetime as dt
 import email.utils
 import fcntl
 import hashlib
+import hmac
 import http.client
 import ipaddress
 import json
@@ -33,7 +36,7 @@ import urllib.parse
 import urllib.request
 
 APP_SUPPORT = Path.home() / "Library/Application Support/Information Bar"
-NAMES = {"codex": "ChatGPT", "claude": "Claude", "cursor": "Cursor", "vast": "Vast.ai", "pearl": "Pearl", "power": "Power"}
+NAMES = {"codex": "ChatGPT", "claude": "Claude", "cursor": "Cursor", "vast": "Vast.ai", "pearl": "Pearl", "power": "Power", "kraken": "Kraken"}
 LINKS = {
     "codex": "https://chatgpt.com/codex/settings/usage",
     "claude": "https://claude.ai/settings/usage",
@@ -41,11 +44,12 @@ LINKS = {
     "vast": "https://cloud.vast.ai/host/machines/",
     "pearl": "https://pool.kryptex.com/prl",
     "power": "https://api-documentation.homewizard.com/docs/getting-started/",
+    "kraken": "https://pro.kraken.com/app/portfolio",
 }
-TTL = {"codex": 60, "claude": 300, "cursor": 60, "vast": 60, "pearl": 60, "power": 60}
+TTL = {"codex": 60, "claude": 300, "cursor": 60, "vast": 60, "pearl": 60, "power": 60, "kraken": 60}
 # The app passes its bundle version; "dev" when run directly.
 VERSION = os.environ.get("INFORMATION_BAR_VERSION", "dev")
-SOURCES = {"codex": "Codex app server", "claude": "Claude account usage", "cursor": "Cursor account usage", "vast": "Vast.ai host API", "pearl": "Kryptex · Pearl explorer · CoinGecko", "power": "HomeWizard local API"}
+SOURCES = {"codex": "Codex app server", "claude": "Claude account usage", "cursor": "Cursor account usage", "vast": "Vast.ai host API", "pearl": "Kryptex · Pearl explorer · CoinGecko", "power": "HomeWizard local API", "kraken": "Kraken REST API"}
 # European Central Bank reference rates, no credential involved.
 RATES_URL = "https://api.frankfurter.dev/v1/latest"
 
@@ -84,9 +88,9 @@ def retry_after_seconds(header):
         return 300
 
 
-def request_json(url, token=None, *, body=None, headers=None):
+def request_json(url, token=None, *, body=None, headers=None, form=None):
     parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in {"api.anthropic.com", "api2.cursor.sh", "console.vast.ai", "api.frankfurter.dev", "pool.kryptex.com", "api.coingecko.com", "blockbook.pearlresearch.ai"}:
+    if parsed.scheme != "https" or parsed.hostname not in {"api.anthropic.com", "api2.cursor.sh", "console.vast.ai", "api.frankfurter.dev", "pool.kryptex.com", "api.coingecko.com", "blockbook.pearlresearch.ai", "api.kraken.com"}:
         raise SourceError("Unrecognized provider endpoint.")
     hdr = {"Accept": "application/json", "User-Agent": "InformationBar/" + VERSION}
     if token:
@@ -96,6 +100,10 @@ def request_json(url, token=None, *, body=None, headers=None):
     if body is not None:
         data = json.dumps(body).encode()
         hdr["Content-Type"] = "application/json"
+    elif form is not None:
+        # Already encoded, because a signed request must send exactly the bytes it signed.
+        data = form.encode()
+        hdr["Content-Type"] = "application/x-www-form-urlencoded; charset=utf-8"
     req = urllib.request.Request(url, data=data, headers=hdr)
     try:
         with urllib.request.build_opener(NoRedirect()).open(req, timeout=20) as response:
@@ -1004,13 +1012,282 @@ def fetch_pearl(config, root):
     return result
 
 
+KRAKEN = "https://api.kraken.com"
+# Balance-key suffixes for staked or reward-earning funds. Others (HOLD, CORE, ...) are the same
+# asset held elsewhere in the spot wallet.
+KRAKEN_EARN = {"S", "M", "B", "F", "P"}
+KRAKEN_RENAMES = {"XBT": "BTC", "XDG": "DOGE"}
+KRAKEN_FIAT = {"USD", "EUR", "GBP", "CAD", "JPY", "CHF", "AUD", "AED"}
+KRAKEN_QUOTES = {"USD": "ZUSD", "EUR": "ZEUR"}
+# Assets without a market in the portfolio currency are priced through one of these.
+KRAKEN_BRIDGES = ("ZUSD", "ZEUR", "XXBT", "XETH", "USDT", "USDC")
+KRAKEN_ERRORS = {
+    "EAPI:Invalid key": ("Kraken rejected the API key. Check it in Kraken Settings.", 300, True),
+    "EAPI:Invalid signature": ("Kraken rejected the private key. Check it in Kraken Settings.", 300, True),
+    "EGeneral:Permission denied": ("This Kraken API key needs the Query Funds permission.", 300, True),
+    "EAPI:Invalid nonce": ("Kraken rejected the request order. Use an API key only for Information Bar.", 300, False),
+    "EGeneral:Temporary lockout": ("Kraken temporarily locked this API key. Refresh will retry later.", 900, False),
+    "EAPI:Rate limit exceeded": ("Kraken is rate limiting requests. Refresh will retry later.", 300, False),
+    "EQuery:Unknown asset pair": ("Kraken no longer lists one of the price markets.", 300, False),
+}
+
+
+class KrakenError(SourceError):
+    def __init__(self, code):
+        if code in KRAKEN_ERRORS:
+            message, retry, auth = KRAKEN_ERRORS[code]
+        elif "rate limit" in code.lower() or "too many" in code.lower():
+            message, retry, auth = KRAKEN_ERRORS["EAPI:Rate limit exceeded"]
+        elif code.startswith("EAuth:"):
+            message, retry, auth = "Kraken did not authorize this API key.", 300, True
+        elif code.startswith("EService:") or code == "EGeneral:Internal error":
+            message, retry, auth = "Kraken is unavailable right now. Refresh will retry later.", 300, False
+        else:
+            message, retry, auth = "Kraken could not complete the request.", 300, False
+        super().__init__(message, retry, auth)
+        self.code = code
+
+
+def kraken_request(path, query=None, **kwargs):
+    # Commas stay literal: Kraken lists several pairs as pair=A,B.
+    url = KRAKEN + path + ("?" + urllib.parse.urlencode(query, safe=",") if query else "")
+    try:
+        data = request_json(url, **kwargs)
+    except HTTPFailure as exc:
+        if exc.status == 429:
+            raise SourceError(KRAKEN_ERRORS["EAPI:Rate limit exceeded"][0], exc.retry_after) from None
+        raise SourceError("Kraken is unavailable (HTTP %s)." % exc.status, exc.retry_after) from None
+    errors = data.get("error")
+    # Codes starting with W are warnings that accompany a valid result.
+    errors = [e for e in errors if isinstance(e, str) and e.startswith("E")] if isinstance(errors, list) else []
+    if errors:
+        raise KrakenError(errors[0])
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise SourceError("Kraken returned an unrecognized response.")
+    return result
+
+
+def kraken_credentials(config):
+    key = str(config.get("apiKey") or "").strip()
+    secret = str(config.get("privateKey") or "").strip()
+    if not key or not secret:
+        raise SourceError("Add a Kraken API key in Settings to show your portfolio.", auth=True)
+    # The pattern also keeps line breaks out of the request headers.
+    if not re.fullmatch(r"[A-Za-z0-9+/=]{16,256}", key):
+        raise SourceError("That Kraken API key is incomplete. Paste it again in Kraken Settings.", auth=True)
+    try:
+        decoded = base64.b64decode(secret, validate=True)
+    except (binascii.Error, ValueError):
+        decoded = b""
+    if len(decoded) < 32:
+        raise SourceError("That Kraken private key is incomplete. Paste it again in Kraken Settings.", auth=True)
+    return key, decoded
+
+
+def kraken_signature(path, postdata, nonce, secret):
+    """API-Sign: HMAC-SHA512 over the URI path and SHA-256(nonce + POST data), keyed by the decoded private key."""
+    message = path.encode() + hashlib.sha256((str(nonce) + postdata).encode()).digest()
+    return base64.b64encode(hmac.new(secret, message, hashlib.sha512).digest()).decode()
+
+
+def kraken_nonce(root):
+    """Milliseconds, persisted so the nonce keeps increasing across runs and clock corrections.
+    Callers hold the provider lock."""
+    path = root / "kraken-nonce.json"
+    try:
+        last = int(json.loads(path.read_text())["nonce"])
+    except (OSError, ValueError, TypeError, KeyError):
+        last = 0
+    nonce = max(int(time.time() * 1000), last + 1)
+    private_write(path, {"nonce": nonce})
+    return nonce
+
+
+def kraken_private(method, config, root):
+    key, secret = kraken_credentials(config)
+    path = "/0/private/" + method
+    nonce = kraken_nonce(root)
+    postdata = urllib.parse.urlencode({"nonce": nonce})
+    return kraken_request(path, form=postdata, headers={"API-Key": key, "API-Sign": kraken_signature(path, postdata, nonce, secret)})
+
+
+def kraken_markets(root, refresh=False):
+    """Asset names and online pairs, refreshed daily. A list up to a week old beats none."""
+    path = root / "kraken-markets.json"
+    cached = {}
+    try:
+        cached = json.loads(path.read_text())
+    except (OSError, ValueError):
+        pass
+    valid = isinstance(cached.get("assets"), dict) and isinstance(cached.get("pairs"), list)
+    age = time.time() - (number(cached.get("checkedAt")) or 0)
+    if valid and age < 86400 and not refresh:
+        return cached
+    try:
+        assets, pairs = kraken_request("/0/public/Assets"), kraken_request("/0/public/AssetPairs")
+        result = {
+            "assets": {key: {"altname": info["altname"], "decimals": int(info.get("display_decimals", 8))}
+                       for key, info in assets.items() if isinstance(info, dict) and isinstance(info.get("altname"), str)},
+            "pairs": [[key, info["base"], info["quote"], str(info.get("wsname") or key)] for key, info in pairs.items()
+                      if isinstance(info, dict) and info.get("status") == "online"
+                      and isinstance(info.get("base"), str) and isinstance(info.get("quote"), str)],
+            "checkedAt": time.time(),
+        }
+    except (SourceError, TypeError, ValueError) as exc:
+        if valid and age < 7 * 86400:
+            return cached
+        raise SourceError("Kraken's market list is unavailable. Refresh will retry later.", getattr(exc, "retry_after", 300)) from None
+    private_write(path, result)
+    return result
+
+
+def kraken_holdings(balances, markets):
+    """Folds staked, earning and held variants (DOT.S, DOT28.S, XBT.M, EUR.HOLD) into their asset."""
+    assets = markets["assets"]
+    by_name = {info["altname"]: key for key, info in assets.items()}
+    traded = {asset for _, base, quote, _ in markets["pairs"] for asset in (base, quote)}
+
+    def resolve(name):
+        return name if name in assets else by_name.get(name)
+
+    holdings = {}
+    for raw, value in balances.items():
+        amount = number(value)
+        if not isinstance(raw, str) or amount is None or amount <= 0:
+            continue
+        base, _, suffix = raw.partition(".")
+        earn = suffix in KRAKEN_EARN or base == "ETH2"
+        key = resolve(base)
+        if earn and key not in traded:
+            # Bonded staking assets such as DOT28 and ETH2 have no market of their own. Assets
+            # that merely end in digits (C98, USDT0) are left alone.
+            key = resolve(base.rstrip("0123456789")) or key
+        if key == "KFEE":
+            continue  # Trading-fee credits, not an asset.
+        name = assets[key]["altname"] if key else base
+        holding = holdings.setdefault(key or base, {
+            "key": key, "symbol": KRAKEN_RENAMES.get(name, name), "amount": 0.0, "earn": 0.0,
+            "decimals": assets[key]["decimals"] if key else 8})
+        holding["amount"] += amount
+        if earn:
+            holding["earn"] += amount
+    return list(holdings.values())
+
+
+def kraken_routes(holdings, markets, quote):
+    """Market legs from each asset to the portfolio currency: direct, inverted, or through one bridge."""
+    pairs = {(base, counter): (key, name) for key, base, counter, name in markets["pairs"]}
+
+    def leg(source, target):
+        if (source, target) in pairs:
+            return [(*pairs[(source, target)], False)]
+        if (target, source) in pairs:
+            return [(*pairs[(target, source)], True)]
+        return None
+
+    routes = {}
+    for holding in holdings:
+        key = holding["key"]
+        if key is None:
+            continue
+        route = [] if key == quote else leg(key, quote)
+        for bridge in KRAKEN_BRIDGES:
+            if route is not None:
+                break
+            if bridge not in (key, quote) and (first := leg(key, bridge)) and (second := leg(bridge, quote)):
+                route = first + second
+        if route is not None:
+            routes[key] = route
+    return routes
+
+
+def kraken_priced(balances, root, quote):
+    """Holdings, their routes and one batched ticker. A delisted pair fails the whole ticker
+    request, so the market list is refetched once."""
+    for refresh in (False, True):
+        markets = kraken_markets(root, refresh)
+        holdings = kraken_holdings(balances, markets)
+        routes = kraken_routes(holdings, markets, quote)
+        names = sorted({leg[0] for route in routes.values() for leg in route})
+        try:
+            return holdings, routes, kraken_request("/0/public/Ticker", {"pair": ",".join(names)}) if names else {}
+        except KrakenError as exc:
+            if exc.code != "EQuery:Unknown asset pair" or refresh:
+                raise
+
+
+def kraken_rate(route, tickers, field):
+    """Product of each leg's last trade ("c") or today's open ("o"), inverted where the pair is."""
+    rate = 1.0
+    for name, _, inverse in route:
+        value = (tickers.get(name) or {}).get(field)
+        price = number(value[0] if isinstance(value, list) and value else value)
+        if price is None or price <= 0:
+            return None
+        rate *= 1 / price if inverse else price
+    return rate
+
+
+def kraken_market(route):
+    return " · ".join("/".join(KRAKEN_RENAMES.get(part, part) for part in name.split("/")) for _, name, _ in route)
+
+
+def fetch_kraken(config, root, currency):
+    currency = currency if currency in KRAKEN_QUOTES else "USD"
+    balances = kraken_private("Balance", config, root)
+    error = None
+    try:
+        holdings, routes, tickers = kraken_priced(balances, root, KRAKEN_QUOTES[currency])
+    except SourceError as exc:
+        # Balances stay useful without prices.
+        holdings, routes, tickers, error = kraken_holdings(balances, kraken_markets(root)), {}, {}, "Prices: " + str(exc)
+    assets, total, change = [], 0.0, 0.0
+    for holding in holdings:
+        route = routes.get(holding["key"])
+        price = kraken_rate(route, tickers, "c") if route is not None else None
+        opened = kraken_rate(route, tickers, "o") if route is not None else None
+        value = holding["amount"] * price if price is not None else None
+        if value is not None:
+            total += value
+            if opened is not None:
+                change += value - holding["amount"] * opened
+        assets.append({"symbol": holding["symbol"], "amount": holding["amount"], "earn": holding["earn"],
+                       "decimals": holding["decimals"], "fiat": holding["symbol"] in KRAKEN_FIAT,
+                       "price": price, "openPrice": opened, "value": value,
+                       "market": kraken_market(route) if route else None})
+    assets.sort(key=lambda asset: (asset["value"] is None, -(asset["value"] or 0), asset["symbol"]))
+    result = {"kraken": {"currency": currency, "totalValue": None if error else total,
+                         "changeValue": None if error else change, "assets": assets}}
+    if error:
+        result.update(status="partial", error=error)
+    return result
+
+
+@contextlib.contextmanager
+def provider_lock(root, provider):
+    lock_fd = os.open(str(root / (provider + ".lock")), os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(lock_fd, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def validate_kraken_key(config, root):
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        # Shares the collector's lock so the two never send the same nonce.
+        with provider_lock(root, "kraken"):
+            kraken_private("Balance", config, root)
+        return {"valid": True}
+    except SourceError as exc:
+        return {"valid": False, "error": str(exc)}
+
+
 def collect(provider, force=False, provided=None, cache_dir=None, currency="USD", utilization_days=None, config=None, device_tokens=None):
     root = Path(cache_dir) if cache_dir is not None else APP_SUPPORT / "Cache"
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     cache_path = root / (provider + ".json")
-    lock_fd = os.open(str(root / (provider + ".lock")), os.O_CREAT | os.O_RDWR, 0o600)
-    with os.fdopen(lock_fd, "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with provider_lock(root, provider):
         now = time.time()
         old = {}
         try:
@@ -1024,7 +1301,7 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
         config_key = hashlib.sha256(json.dumps([config, device_tokens, currency, utilization_days], sort_keys=True).encode()).hexdigest()
         if provider == "pearl":
             config_key = "kryptex-wallet-v1:" + config_key
-        if provider in ("pearl", "power") and old.get("configKey") != config_key:
+        if provider in ("pearl", "power", "kraken") and old.get("configKey") != config_key:
             old = {}
         retry = number(old.get("nextRetryAt")) or 0
         last_attempt = number(old.get("checkedAt")) or 0
@@ -1037,7 +1314,8 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
         try:
             loaders = {"codex": lambda: parse_codex(codex_rpc()), "claude": fetch_claude, "cursor": fetch_cursor,
                        "vast": lambda: fetch_vast(provided, utilization_days, old),
-                       "pearl": lambda: fetch_pearl(config, root), "power": lambda: fetch_power(config, device_tokens)}
+                       "pearl": lambda: fetch_pearl(config, root), "power": lambda: fetch_power(config, device_tokens),
+                       "kraken": lambda: fetch_kraken(config, root, currency)}
             result = {**base, "status": "ok", "updatedAt": now, **loaders[provider]()}
         except Exception as exc:
             if isinstance(exc, SourceError):
@@ -1056,7 +1334,7 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
             if rates:
                 result["rates"] = rates["rates"]
                 result["ratesDate"] = rates.get("date")
-        if provider in ("pearl", "power"):
+        if provider in ("pearl", "power", "kraken"):
             result["configKey"] = config_key
         private_write(cache_path, result)
         return result
@@ -1068,6 +1346,7 @@ def main():
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--credential-stdin", action="store_true")
     parser.add_argument("--validate-vast-key", action="store_true")
+    parser.add_argument("--validate-kraken-key", action="store_true")
     parser.add_argument("--currency", default="USD")
     parser.add_argument("--utilization-days", type=int, default=None)
     args = parser.parse_args()
@@ -1085,6 +1364,12 @@ def main():
             print(json.dumps({"valid": True}))
         except Exception:
             print(json.dumps({"valid": False, "error": "Could not validate this key. Check the key and its host read permissions."}))
+        return
+    if args.validate_kraken_key:
+        try:
+            print(json.dumps(validate_kraken_key(payload.get("kraken") or {}, APP_SUPPORT / "Cache")))
+        except Exception:
+            print(json.dumps({"valid": False, "error": "Could not validate this key with Kraken. Try again."}))
         return
     if args.provider == "all":
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:

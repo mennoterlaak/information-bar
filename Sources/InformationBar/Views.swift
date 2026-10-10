@@ -2,7 +2,8 @@ import SwiftUI
 
 extension Color {
   /// Brand colours. OpenAI and Cursor publish monochrome marks, so their tiles are black with a
-  /// white mark, like their app icons; Claude is terracotta (#D97757) and Vast.ai blue (#315FFF).
+  /// white mark, like their app icons; Claude is terracotta (#D97757), Vast.ai blue (#315FFF)
+  /// and Kraken purple (#7132F5).
   static let codex = Color.black
   static let claude = Color(red: 0.851, green: 0.467, blue: 0.341)
   static let cursor = Color(red: 0.149, green: 0.145, blue: 0.118)
@@ -18,6 +19,7 @@ extension Color {
     case "cursor": return .cursor
     case "pearl": return Color(red: 0.47, green: 0.35, blue: 0.80)
     case "power": return Color(red: 0.22, green: 0.57, blue: 0.43)
+    case "kraken": return Color(red: 0.443, green: 0.196, blue: 0.961)
     default: return .vast
     }
   }
