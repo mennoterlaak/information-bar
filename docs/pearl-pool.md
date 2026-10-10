@@ -2,20 +2,21 @@
 
 In **Settings → Pearl**, enter the public PRL wallet address used for mining on Kryptex. Optionally enter an exact worker name, such as `rtx4090`; leave it empty to combine all workers for that wallet. Save & connect reads the pool directly. No API key, local stats server, SSH connection or extra service on the mining host is required.
 
-The menu bar shows Kryptex's 30-minute accepted hashrate. The dropdown also shows 3-hour and 24-hour averages and online worker counts. These share-based averages fluctuate and can differ from a miner's instantaneous reported speed. Workers explicitly marked offline contribute zero to the current hashrate and revenue projection; their historical averages remain available. A missing wallet/worker or failed request shows an error and leaves hashrate unavailable.
+The menu bar shows Kryptex's 30-minute accepted hashrate. The dropdown header shows that rate with the online worker count. Below it come the projection table, then a Mining section with the PRL price, 3-hour and 24-hour averages and projected PRL per day. Hover a row for its definition. These share-based averages fluctuate and can differ from a miner's instantaneous reported speed. Workers explicitly marked offline contribute zero to the current hashrate and revenue projection; their historical averages remain available. A missing wallet/worker or failed request shows an error and leaves hashrate unavailable.
 
 The worker endpoint is `GET /prl/api/v3/miner/workers/{address}`. Verified live fields are `results[].avg_hashrate_30m`, `avg_hashrate_3h`, `avg_hashrate_24h`, `status`, `scheme`, `coin`, and `miner`; the rate fields are H/s and may be decimal strings. The public OpenAPI schema currently lists an older generic `hashrate` field, so the collector uses the verified v3 average fields explicitly. Responses that indicate incomplete worker lists are rejected rather than displaying partial totals.
 
 ## Wallet balance and payouts
 
-The dropdown shows:
+The dropdown's Balances section shows:
 
-- **Wallet balance:** confirmed PRL held at the saved mining address, read from Pearl's public mainnet Blockbook explorer. This is the current balance of that address, not lifetime receipts or a total across every address a wallet may control. Mempool changes are excluded.
-- **Unpaid pool rewards:** Kryptex's total, split into confirmed rewards and rewards still maturing. Only confirmed rewards count toward the displayed payout threshold.
-- **Total paid by pool:** Kryptex's all-time paid statistic, independent of current wallet holdings. Spending or receiving PRL elsewhere can make this differ from wallet balance.
-- **Recent payouts:** up to five newest records, with date/time, PRL amount and pool-reported status. Valid transaction IDs link to Pearl's mainnet explorer. A pending payout shows its planned amount and retains its pending status; only a finished payout is labeled Paid. Pool status is not an independent on-chain confirmation check.
+- **Wallet:** confirmed PRL held at the saved mining address, read from Pearl's public mainnet Blockbook explorer, with its value at the current price. This is the current balance of that address, not lifetime receipts or a total across every address a wallet may control. Mempool changes are excluded.
+- **Unpaid rewards:** Kryptex's total, with its current value. A bar shows confirmed rewards against the payout threshold; the tooltip splits the total into confirmed rewards and rewards still maturing. Only confirmed rewards count toward the threshold.
+- **Total paid:** Kryptex's all-time paid statistic, independent of current wallet holdings. Spending or receiving PRL elsewhere can make this differ from wallet balance.
 
-Balances and payouts cover the entire configured mining address even when hashrate is filtered to one worker. Use **Settings → Pearl → Add item** for Wallet balance, Unpaid pool rewards or Total paid by pool in the menu bar. The dropdown displays eight decimal places; compact menu items display four.
+**Recent payouts** lists up to five newest records on one line each, with date and time, pool-reported status and PRL amount; the header counts them against the total, as in "5 of 46". Valid transaction IDs link to Pearl's mainnet explorer. A pending payout shows its planned amount and retains its pending status; only a finished payout is labeled Paid, and failed, rejected or cancelled payouts are orange. Pool status is not an independent on-chain confirmation check.
+
+Balances and payouts cover the entire configured mining address even when hashrate is filtered to one worker. Use **Settings → Pearl → Add item** for Wallet balance, Unpaid pool rewards or Total paid by pool in the menu bar. The dropdown and menu items display four decimal places; hover an amount in the dropdown for all eight.
 
 Sources are `GET https://blockbook.pearlresearch.ai/api/v2/address/{address}?details=basic` and Kryptex's `/prl/api/v1/miner/balance/{address}`, `/payouts/{address}`, and `/payouts/{address}/stats`. The explorer's `/api/v2` status must report synchronized Pearl mainnet, eight decimal places, and a block update within 30 minutes. Integer balance units are divided by 100,000,000. The collector never calculates all-time paid by summing one page of payout history.
 
@@ -25,7 +26,7 @@ Each source has independent 60-second caching and error backoff. Requests run co
 
 Projected PRL/day = pool-accepted 30-minute hashrate × Kryptex `estimated_profit_day` × (1 − pool `fee`). This uses PPS+ workers. Shares mined for the software developer do not arrive under your wallet, so the developer fee is already reflected in the accepted hashrate and is not deducted again.
 
-Revenue is projected PRL/day × CoinGecko's USD price for Pearl Research (`pearl-2`), optionally converted to EUR. Profit subtracts measured power assigned to Pearl at the shared Power tariff. The projection scales by 1/24, 1, 7 and 30 for hour, day, week and month. All periods assume uninterrupted mining at the current price, yield and draw. These are projections, not earned or payout balances. Hardware, exchange, withdrawal and tax costs are excluded. Missing price or assigned power readings leave the dependent projections unavailable.
+Revenue is projected PRL/day × CoinGecko's USD price for Pearl Research (`pearl-2`), optionally converted to EUR. Profit subtracts measured power assigned to Pearl at the shared Power tariff. The projection scales by 1/24, 1, 7 and 30 for hour, day, week and month; the table's Power row shows the daily cost it deducts. All periods assume uninterrupted mining at the current price, yield and draw. These are projections, not earned or payout balances. Hardware, exchange, withdrawal and tax costs are excluded. Missing price or assigned power readings leave the dependent projections unavailable.
 
 Previous local API settings are ignored and omitted on the next preferences save; Power settings and other providers are preserved. No local adapter is bundled.
 

@@ -6,121 +6,157 @@ struct PearlMenu: View {
   let power: PowerContext
   private var money: MoneyFormat { MoneyFormat(currency: options.currency, rates: provider.rates) }
   private var projection: MiningProjection { provider.pearlProjection(options, power: power) }
+  /// Nil while stale, so every figure shows a dash instead of an outdated value.
+  private var pearl: PearlMetrics? { provider.isFresh ? provider.pearl : nil }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      metric(
-        "PRL price", value: money.format(provider.pearl?.priceUSD, digits: 3),
-        symbol: "dollarsign.circle")
-      metric("Pool hashrate · 30m", value: formatHashrate(provider.pearl?.hashrate), symbol: "speedometer")
-      if provider.isFresh {
-        if let rate3h = provider.pearl?.hashrate3h, let rate24h = provider.pearl?.hashrate24h {
-          menuNote("3h " + formatHashrate(rate3h) + " · 24h " + formatHashrate(rate24h))
-        }
-        if let online = provider.pearl?.onlineWorkers, let count = provider.pearl?.workerCount {
-          menuNote("Kryptex · \(online)/\(count) workers online")
-        }
-      }
-      if let coins = provider.pearl?.coinsPerDay, provider.isFresh {
-        menuNote(String(format: "≈ %.4f PRL/day after pool fee", coins))
+      projectionTable
+      if projection.powerPerDay == nil {
+        menuNote("Profit needs a tariff and a meter assigned to Pearl in Power Settings.")
       }
       MenuSeparator()
-      walletSection
-      MenuSeparator()
-      Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
-        GridRow {
-          Text("Projections")
-          Text("Revenue")
-          Text("Profit")
-        }.font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-        ForEach(ProjectionPeriod.allCases) { period in
-          GridRow {
-            Text(period.title).foregroundStyle(.secondary)
-            Text(money.local(projection.revenuePerDay.map { $0 * period.days }))
-            Text(money.local(projection.netPerDay.map { $0 * period.days }))
-              .fontWeight(.semibold)
-          }.font(.system(size: 12)).monospacedDigit()
-        }
-      }.padding(.horizontal, MenuMetrics.inset).padding(.vertical, 6)
-      if let cost = projection.powerPerDay {
-        menuNote("Power ≈ " + money.local(cost) + "/day")
-      } else {
-        menuNote("Set a tariff and assign power to Pearl in Power Settings to see profit.")
-      }
-      if let poolFee = provider.pearl?.poolFeePercent {
-        menuNote(String(format: "Pool fee %.2g%% · Developer fee reflected in hashrate", poolFee))
-      }
-      menuNote(
-        "At current price, yield and draw, mining continuously. Profit is after fees and power; other costs excluded."
+      MenuSectionLabel(title: "Mining")
+      MenuValueRow(title: "PRL price", value: money.format(pearl?.priceUSD, digits: 3))
+      MenuValueRow(
+        title: "Hashrate 3h · 24h", value: formatHashrates(pearl?.hashrate3h, pearl?.hashrate24h)
       )
+      .help("Kryptex's accepted-share averages. The headline is the 30-minute average.")
+      MenuValueRow(
+        title: "Yield", value: pearl?.coinsPerDay.map { String(format: "%.2f PRL/day", $0) } ?? "—"
+      )
+      .help(yieldHelp)
       MenuSeparator()
-      payoutSection
+      balances
+      MenuSeparator()
+      payouts
     }
   }
 
-  private var walletSection: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      metric("Wallet balance", value: formatPRL(provider.pearl?.walletBalance), symbol: "wallet.pass")
-      menuNote("Confirmed on-chain at your mining address.")
-      metric("Unpaid pool rewards", value: formatPRL(provider.pearl?.poolBalance), symbol: "hourglass")
-      if provider.isFresh {
-        if let confirmed = provider.pearl?.poolConfirmed,
-          let unconfirmed = provider.pearl?.poolUnconfirmed
-        {
-          menuNote("Confirmed " + formatPRL(confirmed) + "\nMaturing " + formatPRL(unconfirmed))
+  /// Same layout as the Vast.ai earnings table: label column, then left-aligned figures.
+  private var projectionTable: some View {
+    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
+      GridRow {
+        Text("Projection").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+        Text("Revenue").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("Profit").font(.system(size: 11)).foregroundStyle(.secondary)
+      }
+      ForEach(ProjectionPeriod.allCases) { period in
+        GridRow {
+          Text(period.title).font(.system(size: 13)).foregroundStyle(.secondary)
+          Text(money.local(projection.revenuePerDay.map { $0 * period.days }))
+          Text(money.local(projection.netPerDay.map { $0 * period.days }))
         }
-        if let threshold = provider.pearl?.payoutThreshold {
-          menuNote("Payout threshold: " + formatPRL(threshold, digits: 2) + " confirmed.")
+        .font(.system(size: 13, weight: .semibold)).monospacedDigit()
+      }
+      if let cost = projection.powerPerDay {
+        GridRow {
+          Text("Power").font(.system(size: 13)).foregroundStyle(.secondary)
+          Text("")
+          Text("-" + money.local(cost) + "/day").font(.system(size: 13)).monospacedDigit()
+            .foregroundStyle(.secondary)
         }
       }
     }
+    .padding(.horizontal, MenuMetrics.inset).padding(.top, 2).padding(.bottom, 4)
+    .help(
+      "Mining continuously at the current price, yield and draw. Profit deducts the electricity assigned to Pearl; hardware, tax and exchange costs are excluded. Monthly is 30 days."
+    )
   }
 
-  private var payoutSection: some View {
+  private var yieldHelp: String {
+    var text = "Projected PRL per day from the 30-minute hashrate and Kryptex's PPS+ rate"
+    if let fee = pearl?.poolFeePercent { text += String(format: ", after the %.2g%% pool fee", fee) }
+    return text + ". The miner's developer fee is already reflected in the accepted hashrate."
+  }
+
+  private var balances: some View {
     VStack(alignment: .leading, spacing: 0) {
-      metric("Total paid by pool", value: formatPRL(provider.pearl?.totalPaid), symbol: "arrow.down.circle")
-      MenuSectionLabel(title: "Recent payouts").padding(.top, 6)
-      if provider.isFresh, let payouts = provider.pearl?.payouts {
-        if payouts.isEmpty {
-          menuNote("No payouts yet.")
-        } else {
-          ForEach(payouts) { payout in
-            HStack(alignment: .top, spacing: 8) {
-              VStack(alignment: .leading, spacing: 2) {
-                Text(payout.paidAt.formatted(.dateTime.year().month(.abbreviated).day().hour().minute()))
-                Text(payout.status).font(.system(size: 10)).foregroundStyle(.secondary)
-              }
-              Spacer(minLength: 4)
-              Text(formatPRL(payout.amount)).monospacedDigit().fixedSize()
-              if let url = payout.explorerURL {
-                Link(destination: url) {
-                  Image(systemName: "arrow.up.right")
-                }
-                .help("View payout transaction")
-                .accessibilityLabel("View payout transaction")
-              }
-            }
-            .font(.system(size: 11))
-            .padding(.horizontal, MenuMetrics.inset).padding(.vertical, 4)
-          }
-          if let count = provider.pearl?.payoutCount, count > payouts.count {
-            menuNote("Showing latest \(payouts.count) of \(count) payouts.")
-          }
-          menuNote("Payout statuses are reported by Kryptex.")
+      MenuSectionLabel(title: "Balances")
+      MenuValueRow(
+        title: "Wallet", value: formatPRL(pearl?.walletBalance, digits: 4),
+        detail: worth(pearl?.walletBalance)
+      )
+      .help(
+        "Confirmed balance at your mining address on Pearl's explorer: "
+          + formatPRL(pearl?.walletBalance))
+      MenuValueRow(
+        title: "Unpaid rewards", value: formatPRL(pearl?.poolBalance, digits: 4),
+        detail: worth(pearl?.poolBalance)
+      )
+      .help(
+        formatPRL(pearl?.poolBalance) + " held by Kryptex: " + formatPRL(pearl?.poolConfirmed)
+          + " confirmed, " + formatPRL(pearl?.poolUnconfirmed) + " still maturing.")
+      if let confirmed = pearl?.poolConfirmed, let threshold = pearl?.payoutThreshold,
+        threshold > 0
+      {
+        VStack(alignment: .leading, spacing: 4) {
+          CapacityBar(fraction: confirmed / threshold, tint: .provider("pearl"))
+          Text(
+            confirmed >= threshold
+              ? "Payout threshold reached"
+              : String(
+                format: "%.2f of %.2f PRL confirmed for the next payout", confirmed, threshold)
+          )
+          .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
         }
+        .padding(.horizontal, MenuMetrics.inset).padding(.top, 2).padding(.bottom, 4)
+        .accessibilityElement(children: .combine)
+      }
+      MenuValueRow(title: "Total paid", value: formatPRL(pearl?.totalPaid, digits: 4))
+        .help("All-time payouts reported by Kryptex: " + formatPRL(pearl?.totalPaid))
+    }
+  }
+
+  /// Current market value of a PRL amount, or nil when either figure is unknown.
+  private func worth(_ amount: Double?) -> String? {
+    guard let amount, let price = pearl?.priceUSD else { return nil }
+    return money.format(amount * price)
+  }
+
+  private var payoutCountLabel: String {
+    guard let shown = pearl?.payouts?.count, let total = pearl?.payoutCount, total > shown else {
+      return ""
+    }
+    return "\(shown) of \(total)"
+  }
+
+  private var payouts: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      MenuSectionLabel(title: "Recent payouts", trailing: payoutCountLabel)
+      if let payouts = pearl?.payouts {
+        if payouts.isEmpty { menuNote("No payouts yet.") }
+        ForEach(payouts) { PayoutRow(payout: $0) }
       } else {
         menuNote("Payout history unavailable.")
       }
     }
   }
+}
 
-  private func metric(_ title: String, value: String, symbol: String) -> some View {
-    MenuRow(title: title) {
-      MenuBadge { Image(systemName: symbol).foregroundStyle(Color.provider("pearl")) }
-    } trailing: {
-      Text(provider.isFresh ? value : "—").font(.system(size: 13, weight: .semibold))
-        .monospacedDigit().fixedSize(horizontal: true, vertical: false)
+struct PayoutRow: View {
+  let payout: PearlPayout
+  private var failed: Bool { ["Failed", "Rejected", "Cancelled"].contains(payout.status) }
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Text(payout.paidAt.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
+        .foregroundStyle(.secondary)
+      Text(payout.status).foregroundStyle(failed ? Color.orange : Color.secondary)
+      Spacer(minLength: 4)
+      Text(formatPRL(payout.amount, digits: 4)).monospacedDigit()
+      // Rows without a transaction keep the space so amounts stay aligned.
+      if let url = payout.explorerURL {
+        Link(destination: url) { Image(systemName: "arrow.up.right") }
+          .help("View the payout transaction")
+          .accessibilityLabel("View the payout transaction")
+      } else {
+        Image(systemName: "arrow.up.right").hidden()
+      }
     }
+    .font(.system(size: 12)).lineLimit(1)
+    .padding(.horizontal, MenuMetrics.inset).padding(.vertical, 3)
+    .help(formatPRL(payout.amount) + " · status reported by Kryptex")
   }
 }
 
@@ -146,7 +182,7 @@ struct PowerMenu: View {
       }
       if let cost = power.displayCostPerDay {
         MenuSeparator()
-        MenuSectionLabel(title: "Cost at current draw")
+        MenuSectionLabel(title: "Cost at current draw").help("Monthly is 30 days.")
         ForEach(ProjectionPeriod.allCases) { period in
           HStack {
             Text(period.title).foregroundStyle(.secondary)

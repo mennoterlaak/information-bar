@@ -159,6 +159,27 @@ func menuNote(_ text: String) -> some View {
     .padding(.horizontal, MenuMetrics.inset).padding(.vertical, 4)
 }
 
+/// A label and its figure on one line, for plain values that need no badge or gauge.
+struct MenuValueRow: View {
+  let title: String
+  let value: String
+  /// Secondary figure drawn just before the value, such as a converted amount.
+  var detail: String? = nil
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
+      Spacer(minLength: 8)
+      if let detail {
+        Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
+      }
+      Text(value).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+    }
+    .lineLimit(1)
+    .padding(.horizontal, MenuMetrics.inset).padding(.vertical, 3)
+    .accessibilityElement(children: .combine)
+  }
+}
+
 // MARK: - Dropdown
 
 struct ProviderPanel: View {
@@ -190,6 +211,8 @@ struct ProviderPanel: View {
           style: store.preferences.gaugeStyle)
       } else if category == .pearl {
         PearlMenu(provider: provider, options: options, power: store.powerContext)
+      } else if category == .kraken {
+        KrakenMenu(provider: provider)
       } else if category == .power {
         PowerMenu(power: store.powerContext)
       } else {
@@ -205,11 +228,7 @@ struct ProviderPanel: View {
       }
       if let url = provider.url.flatMap(URL.init(string:)) {
         MenuAction(
-          title: category == .vast
-            ? "Open Vast.ai console"
-            : category == .pearl
-              ? "Open Pearl pool"
-              : category == .power ? "HomeWizard setup guide" : "Open \(category.name) usage page",
+          title: actionTitle,
           systemImage: "arrow.up.right"
         ) {
           NSWorkspace.shared.open(url)
@@ -219,6 +238,16 @@ struct ProviderPanel: View {
       MenuAction(title: "Quit Information Bar") { NSApp.terminate(nil) }
     }
     .padding(.vertical, 8)
+  }
+
+  private var actionTitle: String {
+    switch category {
+    case .vast: return "Open Vast.ai console"
+    case .pearl: return "Open Kryptex pool"
+    case .kraken: return "Open Kraken portfolio"
+    case .power: return "HomeWizard setup guide"
+    case .codex, .claude, .cursor: return "Open \(category.name) usage page"
+    }
   }
 
   /// Data refreshes on its own; a manual retry only matters once that has failed.
@@ -231,18 +260,29 @@ struct ProviderPanel: View {
       HStack(alignment: .firstTextBaseline) {
         Text(category.name).font(.system(size: 15, weight: .semibold))
         Spacer()
-        if category == .vast {
-          Text(rentedHeadline).font(.system(size: 15, weight: .semibold)).monospacedDigit()
+        if let headline {
+          Text(headline).font(.system(size: 15, weight: .semibold)).monospacedDigit()
         } else if let plan = provider.plan {
           Text(plan).font(.system(size: 13)).foregroundStyle(.secondary)
         }
       }
-      if category == .vast {
-        Text("GPU hosting").font(.system(size: 13)).foregroundStyle(.secondary)
+      if let subtitle {
+        HStack(alignment: .firstTextBaseline) {
+          Text(subtitle).font(.system(size: 13)).foregroundStyle(.secondary)
+          if let change = krakenChange {
+            Spacer()
+            Text(change.text).font(.system(size: 13)).monospacedDigit()
+              .foregroundStyle(changeColor(change.fraction))
+              .help("Since Kraken's 00:00 UTC open, for the amounts held now.")
+          }
+        }
       }
       if provider.status == "loading" && store.collectorErrors[id] == nil {
-        Text(category.isSubscription || category == .vast ? "Reading account…" : "Reading metrics…")
-          .font(.system(size: 13)).foregroundStyle(.secondary)
+        Text(
+          category.isSubscription || category == .vast || category == .kraken
+            ? "Reading account…" : "Reading metrics…"
+        )
+        .font(.system(size: 13)).foregroundStyle(.secondary)
       }
       ForEach(problems, id: \.self) { message in
         Text(message).font(.system(size: 12)).foregroundStyle(.orange)
@@ -250,6 +290,42 @@ struct ProviderPanel: View {
       }
     }
     .padding(.horizontal, MenuMetrics.inset).padding(.top, 4).padding(.bottom, 2)
+  }
+
+  /// The one figure that sums up the provider, opposite its name.
+  private var headline: String? {
+    switch category {
+    case .vast: return rentedHeadline
+    case .pearl:
+      guard provider.pearl?.hashrate != nil else { return nil }
+      return provider.isFresh ? formatHashrate(provider.pearl?.hashrate) : "—"
+    case .kraken:
+      guard let kraken = provider.kraken else { return nil }
+      return provider.isFresh ? kraken.totalValue.map { kraken.money.local($0) } ?? "—" : "—"
+    case .codex, .claude, .cursor, .power: return nil
+    }
+  }
+
+  private var subtitle: String? {
+    switch category {
+    case .vast: return "GPU hosting"
+    case .pearl:
+      guard provider.isFresh, let online = provider.pearl?.onlineWorkers,
+        let count = provider.pearl?.workerCount
+      else { return provider.pearl == nil ? nil : "Kryptex pool" }
+      return "Kryptex · \(online) of \(count) " + (count == 1 ? "worker" : "workers") + " online"
+    case .kraken: return provider.kraken == nil ? nil : "Spot portfolio"
+    case .codex, .claude, .cursor, .power: return nil
+    }
+  }
+
+  /// Today's portfolio change, shown under the total.
+  private var krakenChange: (text: String, fraction: Double)? {
+    guard category == .kraken, provider.isFresh, let kraken = provider.kraken,
+      let change = kraken.changeValue, let fraction = kraken.changeFraction
+    else { return nil }
+    let amount = (change < 0 ? "-" : "+") + kraken.money.local(abs(change))
+    return (amount + " · " + formatChange(fraction) + " today", fraction)
   }
 
   private var rentedHeadline: String {

@@ -7,6 +7,7 @@ import SwiftUI
 enum CredentialStore {
   static let service = "dev.starecat.InformationBar"
   static let account = "vastai-api-key"
+  static let krakenAccount = "kraken-api-key"
 
   static func query(_ account: String) -> [String: Any] {
     [
@@ -149,6 +150,9 @@ final class DashboardStore: ObservableObject {
   @Published var loginMessage: String?
   @Published var validatingKey = false
   @Published var keyConnected = false
+  @Published var krakenMessage: String?
+  @Published var validatingKraken = false
+  @Published var krakenConnected = false
   @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
   @Published private(set) var preferences: AppPreferences
   @Published var selectedSettings = "global"
@@ -255,6 +259,11 @@ final class DashboardStore: ObservableObject {
       let config = try JSONSerialization.jsonObject(with: JSONEncoder().encode(preferences.power))
       return try JSONSerialization.data(withJSONObject: ["power": config, "deviceTokens": tokens])
     }
+    if id == "kraken" {
+      let credentials = KrakenCredentials.load()
+      krakenConnected = credentials != nil
+      return try JSONEncoder().encode(["kraken": credentials])
+    }
     return nil
   }
 
@@ -283,6 +292,7 @@ final class DashboardStore: ObservableObject {
 
   func start() {
     keyConnected = demo
+    krakenConnected = demo
     refresh()
     timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
       Task { @MainActor in
@@ -306,9 +316,13 @@ final class DashboardStore: ObservableObject {
     if only == nil { lastRefresh = Date() }
     for id in only.map({ [$0] }) ?? ProviderCategory.allCases.map(\.rawValue)
     where !refreshing.contains(id) {
-      // Hidden Vast hosting should not prompt for its key or block unrelated providers at launch.
-      // Explicit refreshes from Vast settings still read the saved key.
-      if id == "vast", only == nil, !preferences.provider(.vast).enabled { continue }
+      // Hidden Vast hosting or Kraken should not prompt for a key or block unrelated providers at
+      // launch. Explicit refreshes from their settings still read the saved key.
+      if let category = ProviderCategory(rawValue: id), category == .vast || category == .kraken,
+        only == nil, !preferences.provider(category).enabled
+      {
+        continue
+      }
       refreshing.insert(id)
       collectorErrors[id] = nil
       let key = id == "vast" ? CredentialStore.read() : nil
@@ -327,6 +341,7 @@ final class DashboardStore: ObservableObject {
           "--currency", vast.currency, "--utilization-days", String(vast.utilizationPeriod.days),
         ]
       }
+      if id == "kraken" { arguments += ["--currency", preferences.provider(.kraken).currency] }
       Task {
         do {
           let data = try await Task.detached(priority: .utility) {
@@ -367,10 +382,7 @@ final class DashboardStore: ObservableObject {
       }
       try CredentialStore.save(key)
       keyConnected = true
-      // Only this app's sanitized Vast cache is invalidated after changing its credential.
-      let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
-        "Library/Application Support/Information Bar/Cache/vast.json")
-      try? FileManager.default.removeItem(at: cache)
+      removeCache("vast")
       settingsMessage = "Connected. Your key is stored in macOS Keychain."
       refresh(force: true, only: "vast")
       return true
@@ -378,6 +390,57 @@ final class DashboardStore: ObservableObject {
       settingsMessage = error.localizedDescription
       return false
     }
+  }
+
+  /// Validates both keys with one Balance request before anything is saved.
+  func saveKraken(apiKey: String, privateKey: String) async -> Bool {
+    let credentials = KrakenCredentials(
+      apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+      privateKey: privateKey.trimmingCharacters(in: .whitespacesAndNewlines))
+    guard !credentials.apiKey.isEmpty, !credentials.privateKey.isEmpty else {
+      krakenMessage = "Enter both the API key and the private key."
+      return false
+    }
+    validatingKraken = true
+    krakenMessage = nil
+    defer { validatingKraken = false }
+    do {
+      let configuration = try JSONEncoder().encode(["kraken": credentials])
+      let data = try await Task.detached(priority: .utility) {
+        try Collector.run(arguments: ["--validate-kraken-key"], configuration: configuration)
+      }.value
+      let response = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+      guard response?["valid"] as? Bool == true else {
+        krakenMessage = response?["error"] as? String ?? "Could not validate the API key."
+        return false
+      }
+      try CredentialStore.save(
+        String(decoding: try JSONEncoder().encode(credentials), as: UTF8.self),
+        account: CredentialStore.krakenAccount)
+      krakenConnected = true
+      removeCache("kraken")
+      krakenMessage = "Connected. Your keys are stored in macOS Keychain."
+      invalidate("kraken")
+      return true
+    } catch {
+      krakenMessage = error.localizedDescription
+      return false
+    }
+  }
+
+  func disconnectKraken() {
+    CredentialStore.delete(account: CredentialStore.krakenAccount)
+    krakenConnected = false
+    removeCache("kraken")
+    krakenMessage = "Disconnected. Both keys were removed from Keychain."
+    invalidate("kraken")
+  }
+
+  /// Only this app's sanitized cache for the provider, after its credential changed.
+  private func removeCache(_ id: String) {
+    let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+      "Library/Application Support/Information Bar/Cache/\(id).json")
+    try? FileManager.default.removeItem(at: cache)
   }
 
   func setLaunchAtLogin(_ enabled: Bool) {

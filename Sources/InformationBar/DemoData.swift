@@ -67,8 +67,33 @@ enum DemoData {
         "poolConfirmed": 0.78614168, "poolUnconfirmed": 1.91954689,
         "payoutThreshold": 1, "totalPaid": 8.63170958, "payoutCount": 7,
         "payouts": [
-          ["id": "demo-paid", "date": now - 3600, "amount": 1.09738591, "status": "Paid"],
           ["id": "demo-pending", "date": now - 60, "amount": 1.02, "status": "Pending"],
+          [
+            "id": "demo-paid", "date": now - 4 * 3600, "amount": 1.09738591, "status": "Paid",
+            "txid": String(repeating: "0", count: 64),
+          ],
+          [
+            "id": "demo-paid-2", "date": now - 8 * 3600, "amount": 1.04144154, "status": "Paid",
+            "txid": String(repeating: "1", count: 64),
+          ],
+        ],
+      ],
+    ])
+    result["kraken"] = decode([
+      "id": "kraken", "name": "Kraken", "status": "ok", "updatedAt": now,
+      "url": "https://pro.kraken.com/app/portfolio",
+      "kraken": [
+        "currency": "EUR", "totalValue": 9237.24, "changeValue": 43.23,
+        "assets": [
+          krakenAsset("BTC", 0.06, earn: 0.01, decimals: 5, price: 74101.6, open: 73748.4),
+          krakenAsset("ETH", 1.7, earn: 0.5, decimals: 5, price: 2239.99, open: 2221.6),
+          krakenAsset("TAO", 2, decimals: 4, price: 253.07, open: 258.91, market: "TAO/USD · EUR/USD"),
+          krakenAsset("EUR", 260.5, decimals: 2, price: 1, open: 1, fiat: true),
+          krakenAsset("DOGE", 1500, decimals: 2, price: 0.0771891, open: 0.0756),
+          krakenAsset("USD", 100, decimals: 2, price: 0.893455, open: 0.8941, fiat: true),
+          krakenAsset("DOT", 10, earn: 10, decimals: 8, price: 1.1171, open: 1.1032),
+          krakenAsset("ADA", 0.4, decimals: 6, price: 0.5512, open: 0.5498),
+          krakenAsset("USDT0", 5, decimals: 4),
         ],
       ],
     ])
@@ -105,7 +130,27 @@ enum DemoData {
     pearl.currency = "EUR"
     pearl.elements += [MenuElement(.profitDaily)]
     preferences.providers["pearl"] = pearl
+    var kraken = ProviderPreferences.defaults(for: .kraken)
+    kraken.currency = "EUR"
+    kraken.elements += [MenuElement(.assetPrice, showLabel: true)]
+    preferences.providers["kraken"] = kraken
     return preferences
+  }
+
+  private static func krakenAsset(
+    _ symbol: String, _ amount: Double, earn: Double = 0, decimals: Int, price: Double? = nil,
+    open: Double? = nil, market: String? = nil, fiat: Bool = false
+  ) -> [String: Any] {
+    var asset: [String: Any] = [
+      "symbol": symbol, "amount": amount, "earn": earn, "decimals": decimals, "fiat": fiat,
+    ]
+    if let price {
+      asset["price"] = price
+      asset["value"] = amount * price
+      asset["market"] = market ?? (price == 1 ? nil : symbol + "/EUR")
+    }
+    if let open { asset["openPrice"] = open }
+    return asset
   }
 
   static func discoveredMeters() -> [DiscoveredHomeWizard] {

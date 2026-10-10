@@ -8,6 +8,7 @@ Retrieved 9 September 2026. These marks identify the connected services; Informa
 | `claude.svg` | [Simple Icons v16 Claude](https://cdn.jsdelivr.net/npm/simple-icons@16.0.0/icons/claude.svg), [CC0 license](https://github.com/simple-icons/simple-icons/blob/16.0.0/LICENSE.md). Claude's distinctive starburst. |
 | `cursor.svg` | [Cursor official brand assets](https://cursor.com/brand), `General Logos/Cube/SVG/CUBE_2D_LIGHT.svg` from the [official archive](https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/brand/cursor-brand-assets.zip). |
 | `vast.svg` | [Vast.ai official documentation repository](https://github.com/vast-ai/docs/blob/main/logo/light.svg), [original SVG](https://raw.githubusercontent.com/vast-ai/docs/main/logo/light.svg). |
+| `kraken.svg` | Kraken's official BIMI logo, [original SVG](https://assets.kraken.com/bimi/payward_inc_1595650602.svg), retrieved 10 October 2026. The purple background square is dropped and the view box trimmed to the mark; the path is unchanged and filled black for template rendering. |
 
 Configuration interaction reference: [iStat Menus 7 welcome guide](https://register.bjango.com/help/istatmenus7/welcome/): independent menu items, category sidebar, per-item switch and display configuration, global appearance, and Command-drag ordering. No iStat artwork or code is bundled.
 

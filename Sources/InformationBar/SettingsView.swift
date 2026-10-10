@@ -23,6 +23,7 @@ struct SettingsView: View {
         Section {
           sidebarRow(.vast)
           sidebarRow(.pearl)
+          sidebarRow(.kraken)
         }
         Section {
           sidebarRow(.power)
@@ -415,11 +416,24 @@ struct MenuBarPreview: View {
     HStack(spacing: 4) {
       Image(systemName: "apple.logo").font(.system(size: 13)).foregroundStyle(.tertiary)
       Spacer(minLength: 10)
-      ForEach(categories) { item in
+      // Like the real menu bar, items that do not fit are hidden from the left.
+      ViewThatFits(in: .horizontal) {
+        ForEach(0..<max(1, categories.count), id: \.self) { hidden in
+          items(Array(categories.dropFirst(hidden)))
+        }
+      }
+    }.padding(.horizontal, 14).frame(height: 38)
+      .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+      .accessibilityLabel("Menu bar preview")
+  }
+
+  private func items(_ shown: [ProviderCategory]) -> some View {
+    HStack(spacing: 4) {
+      ForEach(shown) { item in
         let option = store.preferences.provider(item)
         MenuBarItemView(
-          provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue), options: option,
-          power: store.powerContext
+          provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue),
+          options: option, power: store.powerContext
         ).opacity(option.enabled ? 1 : 0.35)
       }
       if categories.isEmpty {
@@ -427,9 +441,7 @@ struct MenuBarPreview: View {
           "A settings icon stays in the menu bar while every item is hidden.")
       }
       Image(systemName: "switch.2").foregroundStyle(.tertiary)
-    }.padding(.horizontal, 14).frame(height: 38)
-      .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
-      .accessibilityLabel("Menu bar preview")
+    }
   }
 }
 
@@ -440,6 +452,8 @@ struct MenuElementRow: View {
   let category: ProviderCategory
   let element: MenuElement
   let windows: [UsageWindow]
+  /// Symbols of priced holdings, for price elements.
+  var assets: [String] = []
   @State private var targeted = false
   private var elements: [MenuElement] { store.preferences.provider(category).elements }
 
@@ -462,6 +476,17 @@ struct MenuElementRow: View {
           Toggle("Label", isOn: labelBinding).toggleStyle(.checkbox)
             .help("Prefix the value with the pool's short name")
         }
+      }
+      if element.kind.usesAsset {
+        Picker("Asset", selection: assetBinding) {
+          Text("Largest holding").tag("automatic")
+          ForEach(assets, id: \.self) { Text($0).tag($0) }
+          if let selected = element.asset, !assets.contains(selected) {
+            Text(selected + " (not held)").tag(selected)
+          }
+        }.labelsHidden().frame(maxWidth: 220)
+        Toggle("Label", isOn: labelBinding).toggleStyle(.checkbox)
+          .help("Prefix the price with the asset's symbol")
       }
       Button(action: remove) {
         Image(systemName: "minus.circle").foregroundStyle(.secondary)
@@ -492,6 +517,12 @@ struct MenuElementRow: View {
 
   private var labelBinding: Binding<Bool> {
     Binding(get: { element.showLabel }, set: { value in change { $0.showLabel = value } })
+  }
+
+  private var assetBinding: Binding<String> {
+    Binding(
+      get: { element.asset ?? "automatic" },
+      set: { value in change { $0.asset = value == "automatic" ? nil : value } })
   }
 
   private func change(_ update: (inout MenuElement) -> Void) {
@@ -553,13 +584,16 @@ struct CategorySettings: View {
         MenuBarPreview(store: store, category: category)
         ForEach(options.elements) { element in
           MenuElementRow(
-            store: store, category: category, element: element, windows: provider.windows ?? [])
+            store: store, category: category, element: element, windows: provider.windows ?? [],
+            assets: provider.kraken?.tradedAssets.map(\.symbol) ?? [])
         }
         HStack {
           Menu {
             ForEach(MenuElementKind.available(for: category), id: \.self) { kind in
               Button(kind.title(for: category)) {
-                store.update(category) { $0.elements.append(MenuElement(kind)) }
+                store.update(category) {
+                  $0.elements.append(MenuElement(kind, showLabel: kind.usesAsset))
+                }
               }
             }
           } label: {
@@ -600,6 +634,8 @@ struct CategorySettings: View {
       }
       if category == .pearl {
         PearlSettingsSections(store: store)
+      } else if category == .kraken {
+        KrakenSettingsSections(store: store)
       } else if category == .power {
         PowerSettingsSections(store: store)
       } else {
