@@ -197,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       Task { @MainActor in self?.panel.dismiss() }
     }
     store.onUpdate = { [weak self] in self?.updateMenuItems() }
+    store.onLivePrices = { [weak self] in self?.updateMenuItems(only: .kraken) }
     updateMenuItems()
     store.start()
     let arguments = CommandLine.arguments
@@ -251,13 +252,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return edit
   }
 
-  private func updateMenuItems() {
-    switch store.preferences.theme {
-    case .system: NSApp.appearance = nil
-    case .light: NSApp.appearance = NSAppearance(named: .aqua)
-    case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+  private func updateMenuItems(only: ProviderCategory? = nil) {
+    if only == nil {
+      switch store.preferences.theme {
+      case .system: NSApp.appearance = nil
+      case .light: NSApp.appearance = NSAppearance(named: .aqua)
+      case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+      }
     }
-    for category in ProviderCategory.allCases {
+    for category in ProviderCategory.allCases where only == nil || category == only {
       let options = store.preferences.provider(category)
       if !options.enabled {
         if activeCategory == category { panel.dismiss() }
@@ -283,7 +286,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = itemViews[category]
       else { continue }
       let provider = store.providers[category.rawValue] ?? .placeholder(category.rawValue)
-      hosting.rootView = AnyView(MenuBarItemView(provider: provider, options: options))
+      hosting.rootView = AnyView(
+        MenuBarItemView(provider: provider, options: options, power: store.powerContext))
       // macOS pads every status item by about 8pt per side. The content is drawn a little
       // into that margin so neighbouring items sit closer; beyond 8pt it would be clipped.
       let overflow: CGFloat = 3
@@ -291,10 +295,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       let width = max(1, content - 2 * overflow)
       if abs(item.length - width) > 0.5 { item.length = width }
       hosting.frame = NSRect(x: -overflow, y: 0, width: content, height: button.bounds.height)
-      let summary = provider.menuSummary(options)
+      let summary = provider.menuSummary(options, power: store.powerContext)
       button.toolTip = "\(category.name) · \(summary) · \(provider.ageLabel)"
       button.setAccessibilityLabel("\(category.name): \(summary)")
     }
+    // SwiftUI applies the new data on the next pass; measure the open panel after it.
+    DispatchQueue.main.async { [weak self] in self?.panel.refit() }
+    guard only == nil else { return }
     if statusItems.isEmpty && fallbackItem == nil {
       let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
       item.button?.image = NSImage(
@@ -307,8 +314,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       NSStatusBar.system.removeStatusItem(item)
       fallbackItem = nil
     }
-    // SwiftUI applies the new data on the next pass; measure the open panel after it.
-    DispatchQueue.main.async { [weak self] in self?.panel.refit() }
   }
 
   @objc private func togglePanel(_ sender: NSStatusBarButton) {

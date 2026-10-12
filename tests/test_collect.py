@@ -256,6 +256,20 @@ class ReliabilityTests(unittest.TestCase):
     def test_request_rejects_unrecognized_destination(self):
         with self.assertRaises(c.SourceError): c.request_json("https://example.com", "test-only-token")
 
+    def test_array_responses_are_only_accepted_when_explicitly_requested(self):
+        opener = MagicMock()
+        response = opener.open.return_value.__enter__.return_value
+        response.read.return_value = b'[{"timestamp": 1800000000000, "hashrate": 0}]'
+        url = "https://pool.kryptex.com/prl/api/v1/miner/chart/test?days=7"
+        with patch.object(c.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaises(c.SourceError):
+                c.request_json(url)
+            self.assertEqual(c.request_json(url, response_type=list)[0]["hashrate"], 0)
+            response.read.return_value = b'{"error": "unavailable"}'
+            with self.assertRaises(c.SourceError):
+                c.request_json(url, response_type=list)
+        self.assertFalse(opener.open.call_args[0][0].has_header("Authorization"))
+
     def test_http_backoff_honors_retry_after_and_retries_sign_in_errors_sooner(self):
         url = "https://api.anthropic.com/api/oauth/usage"
         for code, header, expected in ((401, None, 60), (403, None, 60), (500, None, 300), (429, "900", 900), (503, "invalid", 300)):
