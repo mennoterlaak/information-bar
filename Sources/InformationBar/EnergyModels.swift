@@ -1,11 +1,34 @@
 import Foundation
 
+enum PearlAverageWindow: String, Codable, CaseIterable {
+  case thirtyMinutes = "30m", threeHours = "3h", day = "24h", week = "7d"
+
+  var title: String {
+    switch self {
+    case .thirtyMinutes: return "30 minutes"
+    case .threeHours: return "3 hours"
+    case .day: return "24 hours"
+    case .week: return "7 days"
+    }
+  }
+
+  var averageDescription: String {
+    switch self {
+    case .thirtyMinutes: return "30-minute average"
+    case .threeHours: return "3-hour average"
+    case .day: return "24-hour average"
+    case .week: return "7-day average"
+    }
+  }
+}
+
 struct PearlPreferences: Codable, Equatable {
   var walletAddress = ""
   /// Empty includes all workers mining to this wallet.
   var workerName = ""
+  var averageWindow = PearlAverageWindow.week
 
-  enum CodingKeys: String, CodingKey { case walletAddress, workerName }
+  enum CodingKeys: String, CodingKey { case walletAddress, workerName, averageWindow }
 
   init() {}
 
@@ -14,6 +37,8 @@ struct PearlPreferences: Codable, Equatable {
     // Ignore retired local API settings without resetting the user's other preferences.
     walletAddress = try values.decodeIfPresent(String.self, forKey: .walletAddress) ?? ""
     workerName = try values.decodeIfPresent(String.self, forKey: .workerName) ?? ""
+    let savedWindow = try values.decodeIfPresent(String.self, forKey: .averageWindow)
+    averageWindow = savedWindow.flatMap(PearlAverageWindow.init(rawValue:)) ?? .week
   }
 
   var validationError: String? {
@@ -109,8 +134,12 @@ struct PearlMetrics: Decodable {
   let priceUSD: Double?
   let priceUpdatedAt: Double?
   let hashrate: Double?
+  let averageWindow: PearlAverageWindow?
+  let hashrate30m: Double?
   let hashrate3h: Double?
   let hashrate24h: Double?
+  let hashrate7d: Double?
+  let historyUpdatedAt: Double?
   let onlineWorkers: Int?
   let workerCount: Int?
   let coinsPerDay: Double?
@@ -123,6 +152,10 @@ struct PearlMetrics: Decodable {
   let totalPaid: Double?
   let payoutCount: Int?
   let payouts: [PearlPayout]?
+
+  // Cached metrics from older app versions always used the 30-minute rate.
+  var effectiveAverageWindow: PearlAverageWindow { averageWindow ?? .thirtyMinutes }
+  var shortHashrate: Double? { hashrate30m ?? (averageWindow == nil ? hashrate : nil) }
 }
 
 struct PearlPayout: Decodable, Identifiable {

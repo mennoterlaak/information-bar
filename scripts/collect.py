@@ -88,7 +88,7 @@ def retry_after_seconds(header):
         return 300
 
 
-def request_json(url, token=None, *, body=None, headers=None, form=None):
+def request_json(url, token=None, *, body=None, headers=None, form=None, response_type=dict):
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in {"api.anthropic.com", "api2.cursor.sh", "console.vast.ai", "api.frankfurter.dev", "pool.kryptex.com", "api.coingecko.com", "blockbook.pearlresearch.ai", "api.kraken.com"}:
         raise SourceError("Unrecognized provider endpoint.")
@@ -108,7 +108,7 @@ def request_json(url, token=None, *, body=None, headers=None, form=None):
     try:
         with urllib.request.build_opener(NoRedirect()).open(req, timeout=20) as response:
             value = json.loads(response.read(4 * 1024 * 1024))
-            if not isinstance(value, dict):
+            if not isinstance(value, response_type):
                 raise SourceError("The provider returned an unrecognized response.")
             return value
     except urllib.error.HTTPError as exc:
@@ -859,6 +859,60 @@ def pearl_workers(config, root):
     return {key: value for key, value in result.items() if key != "checkedAt"}
 
 
+def parse_pearl_history(data):
+    """Time-weight the raw ten-minute samples across a complete seven-day chart window."""
+    window, interval = 7 * 86400, 600
+    if not isinstance(data, list) or len(data) < 2:
+        raise SourceError("Kryptex has not reported seven days of hashrate history yet.")
+    points = []
+    for row in data:
+        at = timestamp(row.get("timestamp")) if isinstance(row, dict) else None
+        rate = number(row.get("hashrate")) if isinstance(row, dict) else None
+        if at is None or rate is None or rate < 0:
+            raise SourceError("Kryptex returned invalid hashrate history.")
+        points.append((at, rate))
+    points.sort()
+    end = points[-1][0]
+    start = end - window
+    if not -60 <= time.time() - end < 1800:
+        raise SourceError("Kryptex's seven-day hashrate history is stale.")
+    if points[0][0] > start:
+        raise SourceError("Kryptex has not reported seven days of hashrate history yet.")
+    weighted = []
+    for (at, rate), (next_at, _) in zip(points, points[1:]):
+        if next_at <= at:
+            raise SourceError("Kryptex returned duplicate hashrate history timestamps.")
+        if next_at <= start:
+            continue
+        # Missing intervals are unknown, never downtime. Explicit zero samples do count.
+        if next_at - at != interval:
+            raise SourceError("Kryptex's seven-day hashrate history has missing intervals.")
+        weighted.append(rate * ((next_at - max(at, start)) / window))
+    average = math.fsum(weighted)
+    if not math.isfinite(average):
+        raise SourceError("Kryptex returned invalid hashrate history.")
+    return {"hashrate7d": average, "historyUpdatedAt": end}
+
+
+def pearl_history(config, root):
+    wallet = pearl_wallet_address(config)
+    worker = str(config.get("workerName") or "").strip()
+    path = urllib.parse.quote(wallet, safe="")
+    if worker:
+        path += "/" + urllib.parse.quote(worker, safe="")
+    key = hashlib.sha256(json.dumps([wallet, worker]).encode()).hexdigest()
+
+    def load():
+        data = request_json("https://pool.kryptex.com/prl/api/v1/miner/chart/" + path + "?days=7",
+                            response_type=list)
+        return parse_pearl_history(data)
+
+    result = pearl_source(root / ("pearl-history-v1-" + key + ".json"), 300, load)
+    if not -60 <= time.time() - result["historyUpdatedAt"] < 1800:
+        raise SourceError("Kryptex's seven-day hashrate history is stale.")
+    return {key: value for key, value in result.items() if key != "checkedAt"}
+
+
 def pearl_account_source(config, root, source, path, parser):
     wallet = pearl_wallet_address(config)
     key = hashlib.sha256(wallet.encode()).hexdigest()
@@ -976,8 +1030,13 @@ def pearl_wallet(config, root):
 
 
 def fetch_pearl(config, root):
-    metrics, errors, results = {}, [], {}
+    window = config.get("averageWindow", "7d")
+    fields = {"30m": "hashrate30m", "3h": "hashrate3h", "24h": "hashrate24h", "7d": "hashrate7d"}
+    if window not in fields:
+        raise SourceError("Choose a hashrate average in Pearl Settings.")
+    metrics, errors, results = {"averageWindow": window}, [], {}
     loaders = {"Price": lambda: pearl_price(root), "Hashrate": lambda: pearl_workers(config, root),
+               "7-day average": lambda: pearl_history(config, root),
                "Pool yield": lambda: pearl_pool(root), "Wallet balance": lambda: pearl_wallet(config, root),
                "Pool balance": lambda: pearl_balance(config, root), "Payout history": lambda: pearl_payouts(config, root),
                "Total paid": lambda: pearl_paid(config, root)}
@@ -989,12 +1048,22 @@ def fetch_pearl(config, root):
             try:
                 results[name] = job.result()
             except SourceError as exc:
-                errors.append(name + ": " + str(exc))
+                # An unavailable optional average must not flag a healthy shorter selection.
+                if name != "7-day average" or window == "7d":
+                    errors.append(name + ": " + str(exc))
     if price := results.get("Price"):
         metrics.update(priceUSD=price["priceUSD"], priceUpdatedAt=price["updatedAt"])
-    workers = results.get("Hashrate", {})
+    workers = dict(results.get("Hashrate", {}))
     supports_pps = workers.pop("supportsPPS", False)
+    if "hashrate" in workers:
+        workers["hashrate30m"] = workers.pop("hashrate")
     metrics.update(workers)
+    metrics.update(results.get("7-day average", {}))
+    # Require the current worker response to validate this selection and its PPS scheme.
+    if workers and metrics.get(fields[window]) is not None:
+        metrics["hashrate"] = metrics[fields[window]]
+    elif workers and (window != "7d" or "7-day average" in results):
+        errors.append("Kryptex has not reported the selected hashrate average yet.")
     for name in ("Wallet balance", "Pool balance", "Payout history", "Total paid"):
         metrics.update(results.get(name, {}))
     if metrics.get("hashrate") is not None:
@@ -1303,7 +1372,7 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
         # goes to disk, not the config, URLs, tokens or wallet addresses.
         config_key = hashlib.sha256(json.dumps([config, device_tokens, currency, utilization_days], sort_keys=True).encode()).hexdigest()
         if provider == "pearl":
-            config_key = "kryptex-wallet-v1:" + config_key
+            config_key = "kryptex-average-v2:" + config_key
         if provider in ("pearl", "power", "kraken") and old.get("configKey") != config_key:
             old = {}
         retry = number(old.get("nextRetryAt")) or 0

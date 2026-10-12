@@ -217,10 +217,45 @@ final class EnergyTests: XCTestCase {
     XCTAssertEqual(preferences.theme, .dark)
     XCTAssertEqual(preferences.power.pricePerKWh, 0.23)
     XCTAssertEqual(preferences.pearl.walletAddress, "")
+    XCTAssertEqual(preferences.pearl.averageWindow, .week)
     let saved = String(decoding: try JSONEncoder().encode(preferences), as: UTF8.self)
     XCTAssertFalse(saved.contains("minerURL"))
     XCTAssertFalse(saved.contains("minerFeePercent"))
     XCTAssertTrue(ProviderPreferences.defaults(for: .pearl).elements.contains { $0.kind == .hashrate })
+  }
+
+  func testPearlAverageSelectionPersistsAndExistingWalletUsesSevenDays() throws {
+    let legacy = Data(#"{"walletAddress":"prl1example","workerName":"rtx4090"}"#.utf8)
+    var preferences = try JSONDecoder().decode(PearlPreferences.self, from: legacy)
+    XCTAssertEqual(preferences.averageWindow, .week)
+    XCTAssertEqual(preferences.walletAddress, "prl1example")
+    XCTAssertEqual(preferences.workerName, "rtx4090")
+    for window in PearlAverageWindow.allCases {
+      preferences.averageWindow = window
+      XCTAssertEqual(
+        try JSONDecoder().decode(PearlPreferences.self, from: JSONEncoder().encode(preferences)),
+        preferences)
+    }
+    let unknown = Data(#"{"walletAddress":"prl1example","averageWindow":"unknown"}"#.utf8)
+    XCTAssertEqual(try JSONDecoder().decode(PearlPreferences.self, from: unknown).averageWindow, .week)
+  }
+
+  func testSelectedPearlAverageFeedsMenuAndProjectionWithAccurateLegacyLabel() throws {
+    let options = ProviderPreferences.defaults(for: .pearl)
+    let item = try provider("pearl", fields: ["pearl": [
+      "priceUSD": 2, "hashrate": 300e12, "hashrate30m": 400e12, "hashrate7d": 300e12,
+      "coinsPerDay": 5.88, "averageWindow": "7d",
+    ]])
+    XCTAssertEqual(item.pearl?.effectiveAverageWindow, .week)
+    XCTAssertEqual(item.pearl?.shortHashrate, 400e12)
+    XCTAssertEqual(item.text(for: MenuElement(.hashrate), preferences: options), "300.00 TH/s")
+    XCTAssertEqual(item.pearlProjection(options, power: PowerContext(preferences: .init())).revenuePerDay, 11.76)
+    let old = try provider("pearl", fields: ["pearl": ["hashrate": 400e12]])
+    XCTAssertEqual(old.pearl?.effectiveAverageWindow, .thirtyMinutes)
+    XCTAssertEqual(old.pearl?.shortHashrate, 400e12)
+    let missing = try provider("pearl", fields: ["pearl": ["averageWindow": "7d", "hashrate30m": 400e12]])
+    XCTAssertEqual(missing.text(for: MenuElement(.hashrate), preferences: options), "—")
+    XCTAssertNil(missing.pearlProjection(options, power: PowerContext(preferences: .init())).revenuePerDay)
   }
 
   func testPearlPoolConnectionValidation() {

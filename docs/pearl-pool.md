@@ -2,9 +2,15 @@
 
 In **Settings → Pearl**, enter the public PRL wallet address used for mining on Kryptex. Optionally enter an exact worker name, such as `rtx4090`; leave it empty to combine all workers for that wallet. Save & connect reads the pool directly. No API key, local stats server, SSH connection or extra service on the mining host is required.
 
-The menu bar shows Kryptex's 30-minute accepted hashrate. The dropdown header shows that rate with the online worker count. Below it come the projection table, then a Mining section with the PRL price, 3-hour and 24-hour averages and projected PRL per day. Hover a row for its definition. These share-based averages fluctuate and can differ from a miner's instantaneous reported speed. Workers explicitly marked offline contribute zero to the current hashrate and revenue projection; their historical averages remain available. A missing wallet/worker or failed request shows an error and leaves hashrate unavailable.
+**Settings → Pearl → Hashrate average** selects **30 minutes, 3 hours, 24 hours or 7 days**. Seven days is the default, including for existing configurations. Click **Save & connect** to apply a change. The selected average drives the menu bar, dropdown headline, projected PRL/day and revenue/profit table. The dropdown labels the selected period and also shows all four averages and the online worker count.
+
+These accepted-share averages fluctuate and can differ from a miner's instantaneous reported speed. Workers explicitly marked offline contribute zero to the 30-minute current rate; historical averages can remain nonzero while offline. Longer-window projections assume that historical average continues. A missing wallet/worker or failed selected-average request leaves the headline and projections unavailable; the app never silently substitutes a shorter average.
 
 The worker endpoint is `GET /prl/api/v3/miner/workers/{address}`. Verified live fields are `results[].avg_hashrate_30m`, `avg_hashrate_3h`, `avg_hashrate_24h`, `status`, `scheme`, `coin`, and `miner`; the rate fields are H/s and may be decimal strings. The public OpenAPI schema currently lists an older generic `hashrate` field, so the collector uses the verified v3 average fields explicitly. Responses that indicate incomplete worker lists are rejected rather than displaying partial totals.
+
+The seven-day average comes from `GET /prl/api/v1/miner/chart/{address}?days=7`, or `/chart/{address}/{worker}?days=7` for an exact worker. It is available immediately from pool history, without keeping the Mac awake to collect samples. The verified chart contains 1,009 ten-minute points spanning seven days, with millisecond `timestamp` values and raw `hashrate` in H/s. The collector time-weights the raw rate from each timestamp to the next, clipped to seven days ending at the latest chart timestamp. It does not average the chart's already-smoothed 30-minute/3-hour fields or extrapolate beyond its latest timestamp. Explicit zero-rate intervals count as downtime; missing intervals, duplicate timestamps, malformed samples or less than a full week leave this average unavailable. The latest chart timestamp must be less than 30 minutes old.
+
+History has its own five-minute cache and error backoff, scoped to the wallet and worker. Only the normalized average and latest chart timestamp are stored, with private file permissions. If weekly history is unavailable, shorter selections and independent price/balance data remain usable.
 
 ## Wallet balance and payouts
 
@@ -24,9 +30,9 @@ Each source has independent 60-second caching and error backoff. Requests run co
 
 ## Projection definitions
 
-Projected PRL/day = pool-accepted 30-minute hashrate × Kryptex `estimated_profit_day` × (1 − pool `fee`). This uses PPS+ workers. Shares mined for the software developer do not arrive under your wallet, so the developer fee is already reflected in the accepted hashrate and is not deducted again.
+Projected PRL/day = selected pool-accepted hashrate average × current Kryptex `estimated_profit_day` × (1 − pool `fee`). This uses PPS+ workers. Shares mined for the software developer do not arrive under your wallet, so the developer fee is already reflected in the accepted hashrate and is not deducted again.
 
-Revenue is projected PRL/day × CoinGecko's USD price for Pearl Research (`pearl-2`), optionally converted to EUR. Profit subtracts measured power assigned to Pearl at the shared Power tariff. The projection scales by 1/24, 1, 7 and 30 for hour, day, week and month; the table's Power row shows the daily cost it deducts. All periods assume uninterrupted mining at the current price, yield and draw. These are projections, not earned or payout balances. Hardware, exchange, withdrawal and tax costs are excluded. Missing price or assigned power readings leave the dependent projections unavailable.
+Revenue is projected PRL/day × CoinGecko's USD price for Pearl Research (`pearl-2`), optionally converted to EUR. Profit subtracts measured power assigned to Pearl at the shared Power tariff. The projection scales by 1/24, 1, 7 and 30 for hour, day, week and month; the table's Power row shows the daily cost it deducts. All periods assume the selected hashrate average continues at the current price, yield and draw. A seven-day hashrate selection does not turn these into historical earnings or average past prices, yields or power readings. Hardware, exchange, withdrawal and tax costs are excluded. Missing price or assigned power readings leave the dependent projections unavailable.
 
 Previous local API settings are ignored and omitted on the next preferences save; Power settings and other providers are preserved. No local adapter is bundled.
 

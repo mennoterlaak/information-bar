@@ -19,9 +19,13 @@ struct PearlMenu: View {
       MenuSectionLabel(title: "Mining")
       MenuValueRow(title: "PRL price", value: money.format(pearl?.priceUSD, digits: 3))
       MenuValueRow(
-        title: "Hashrate 3h · 24h", value: formatHashrates(pearl?.hashrate3h, pearl?.hashrate24h)
+        title: "Hashrate 30m · 3h", value: formatHashrates(pearl?.shortHashrate, pearl?.hashrate3h)
       )
-      .help("Kryptex's accepted-share averages. The headline is the 30-minute average.")
+      .help("Kryptex's accepted-share averages. Choose the average used by the headline and projections in Pearl Settings.")
+      MenuValueRow(
+        title: "Hashrate 24h · 7d", value: formatHashrates(pearl?.hashrate24h, pearl?.hashrate7d)
+      )
+      .help("The 7-day average uses a full week of Kryptex's hashrate history, including recorded downtime. Incomplete or stale history stays unavailable.")
       MenuValueRow(
         title: "Yield", value: pearl?.coinsPerDay.map { String(format: "%.2f PRL/day", $0) } ?? "—"
       )
@@ -37,7 +41,8 @@ struct PearlMenu: View {
   private var projectionTable: some View {
     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
       GridRow {
-        Text("Projection").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+        Text("Projection · \(provider.pearl?.effectiveAverageWindow.rawValue ?? "7d")")
+          .font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
         Text("Revenue").font(.system(size: 11)).foregroundStyle(.secondary)
         Text("Profit").font(.system(size: 11)).foregroundStyle(.secondary)
       }
@@ -60,12 +65,13 @@ struct PearlMenu: View {
     }
     .padding(.horizontal, MenuMetrics.inset).padding(.top, 2).padding(.bottom, 4)
     .help(
-      "Mining continuously at the current price, yield and draw. Profit deducts the electricity assigned to Pearl; hardware, tax and exchange costs are excluded. Monthly is 30 days."
+      "Continuing at the selected hashrate average with the current price, yield and measured draw. These are projections, not past earnings. Profit deducts the electricity assigned to Pearl; hardware, tax and exchange costs are excluded. Monthly is 30 days."
     )
   }
 
   private var yieldHelp: String {
-    var text = "Projected PRL per day from the 30-minute hashrate and Kryptex's PPS+ rate"
+    let average = provider.pearl?.effectiveAverageWindow.averageDescription ?? "selected average"
+    var text = "Projected PRL per day from the \(average) and Kryptex's current PPS+ rate"
     if let fee = pearl?.poolFeePercent { text += String(format: ", after the %.2g%% pool fee", fee) }
     return text + ". The miner's developer fee is already reflected in the accepted hashrate."
   }
