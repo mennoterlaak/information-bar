@@ -202,7 +202,7 @@ final class ModelsTests: XCTestCase {
     XCTAssertFalse(vast.enabled)
     XCTAssertEqual(vast.elements.map(\.kind), [.icon, .today])
     XCTAssertEqual(vast.currency, "USD")
-    XCTAssertNil(vast.powerPrice)
+    XCTAssertNil(preferences.power.pricePerKWh)
     XCTAssertEqual(vast.utilizationPeriod, .week)
     XCTAssertEqual(preferences.theme, .dark)
   }
@@ -224,7 +224,7 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(formatDecimalInput(nil), "")
   }
 
-  func testNetEarningsDeductTheEnteredPowerCost() throws {
+  func testNetEarningsDeductTheMeasuredPowerCost() throws {
     let raw: [String: Any] = [
       "id": "vast", "name": "Vast.ai", "status": "ok",
       "updatedAt": Date().timeIntervalSince1970, "todayEarnings": 4.8, "estimatedHourly": 1.0,
@@ -235,17 +235,31 @@ final class ModelsTests: XCTestCase {
       Provider.self, from: JSONSerialization.data(withJSONObject: raw))
     var options = ProviderPreferences.defaults(for: .vast)
     XCTAssertNil(item.earnings(options).net)
-    options.powerPrice = 0.25
-    options.machineWatts = ["1": 400]
-    let figures = item.earnings(options)
-    XCTAssertEqual(figures.powerPerDay, 2.4)
+    var power = PowerContext.empty
+    power.preferences.pricePerKWh = 0.25
+    power.preferences.devices = [HomeWizardDevice(id: "host-meter", assignment: .vast)]
+    let meter: [String: Any] = [
+      "id": "power", "name": "Power", "status": "ok", "updatedAt": Date().timeIntervalSince1970,
+      "powerDevices": [
+        [
+          "id": "host-meter", "name": "Host meter", "status": "ok", "watts": 400,
+          "updatedAt": Date().timeIntervalSince1970,
+        ]
+      ],
+    ]
+    power.provider = try JSONDecoder().decode(
+      Provider.self, from: JSONSerialization.data(withJSONObject: meter))
+    let figures = item.earnings(options, power: power)
+    XCTAssertEqual(figures.powerPerDay ?? 0, 2.4, accuracy: 0.00001)
     XCTAssertEqual(figures.net?.hourly ?? 0, 0.9, accuracy: 0.0001)
     XCTAssertEqual(figures.net?.average ?? 0, 1.0, accuracy: 0.0001)
     XCTAssertGreaterThanOrEqual(figures.net?.today ?? 0, 4.8 - 2.4)
     options.earningsView = .net
-    XCTAssertEqual(item.text(for: MenuElement(.hourly), preferences: options), "$0.90/h")
+    XCTAssertEqual(
+      item.text(for: MenuElement(.hourly), preferences: options, power: power), "$0.90/h")
     options.earningsView = .both
-    XCTAssertEqual(item.text(for: MenuElement(.hourly), preferences: options), "$1.00/h")
+    XCTAssertEqual(
+      item.text(for: MenuElement(.hourly), preferences: options, power: power), "$1.00/h")
   }
 
   func testIconStyleValuesMatchWhatMacOSWrites() {

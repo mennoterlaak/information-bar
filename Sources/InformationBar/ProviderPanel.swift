@@ -159,6 +159,27 @@ func menuNote(_ text: String) -> some View {
     .padding(.horizontal, MenuMetrics.inset).padding(.vertical, 4)
 }
 
+/// A label and its figure on one line, for plain values that need no badge or gauge.
+struct MenuValueRow: View {
+  let title: String
+  let value: String
+  /// Secondary figure drawn just before the value, such as a converted amount.
+  var detail: String? = nil
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
+      Spacer(minLength: 8)
+      if let detail {
+        Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
+      }
+      Text(value).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+    }
+    .lineLimit(1)
+    .padding(.horizontal, MenuMetrics.inset).padding(.vertical, 3)
+    .accessibilityElement(children: .combine)
+  }
+}
+
 // MARK: - Dropdown
 
 struct ProviderPanel: View {
@@ -185,7 +206,15 @@ struct ProviderPanel: View {
       header
       MenuSeparator()
       if category == .vast {
-        VastMenu(provider: provider, options: options, style: store.preferences.gaugeStyle)
+        VastMenu(
+          provider: provider, options: options, power: store.powerContext,
+          style: store.preferences.gaugeStyle)
+      } else if category == .pearl {
+        PearlMenu(provider: provider, options: options, power: store.powerContext)
+      } else if category == .kraken {
+        KrakenMenu(provider: provider)
+      } else if category == .power {
+        PowerMenu(power: store.powerContext)
       } else {
         allowances
       }
@@ -199,7 +228,7 @@ struct ProviderPanel: View {
       }
       if let url = provider.url.flatMap(URL.init(string:)) {
         MenuAction(
-          title: category == .vast ? "Open Vast.ai console" : "Open \(category.name) usage page",
+          title: actionTitle,
           systemImage: "arrow.up.right"
         ) {
           NSWorkspace.shared.open(url)
@@ -209,6 +238,16 @@ struct ProviderPanel: View {
       MenuAction(title: "Quit Information Bar") { NSApp.terminate(nil) }
     }
     .padding(.vertical, 8)
+  }
+
+  private var actionTitle: String {
+    switch category {
+    case .vast: return "Open Vast.ai console"
+    case .pearl: return "Open Kryptex pool"
+    case .kraken: return "Open Kraken portfolio"
+    case .power: return "HomeWizard setup guide"
+    case .codex, .claude, .cursor: return "Open \(category.name) usage page"
+    }
   }
 
   /// Data refreshes on its own; a manual retry only matters once that has failed.
@@ -221,17 +260,32 @@ struct ProviderPanel: View {
       HStack(alignment: .firstTextBaseline) {
         Text(category.name).font(.system(size: 15, weight: .semibold))
         Spacer()
-        if category == .vast {
-          Text(rentedHeadline).font(.system(size: 15, weight: .semibold)).monospacedDigit()
+        if let headline {
+          Text(headline).font(.system(size: 15, weight: .semibold)).monospacedDigit()
         } else if let plan = provider.plan {
           Text(plan).font(.system(size: 13)).foregroundStyle(.secondary)
         }
       }
-      if category == .vast {
-        Text("GPU hosting").font(.system(size: 13)).foregroundStyle(.secondary)
+      if let subtitle {
+        HStack(alignment: .firstTextBaseline) {
+          Text(subtitle).font(.system(size: 13)).foregroundStyle(.secondary)
+          if category == .kraken && provider.isFresh && store.krakenFeed.isLive {
+            LiveBadge()
+          }
+          if let change = krakenChange {
+            Spacer()
+            Text(change.text).font(.system(size: 13)).monospacedDigit()
+              .foregroundStyle(changeColor(change.fraction))
+              .help("Since Kraken's 00:00 UTC open, for the amounts held now.")
+          }
+        }
       }
       if provider.status == "loading" && store.collectorErrors[id] == nil {
-        Text("Reading account…").font(.system(size: 13)).foregroundStyle(.secondary)
+        Text(
+          category.isSubscription || category == .vast || category == .kraken
+            ? "Reading account…" : "Reading metrics…"
+        )
+        .font(.system(size: 13)).foregroundStyle(.secondary)
       }
       ForEach(problems, id: \.self) { message in
         Text(message).font(.system(size: 12)).foregroundStyle(.orange)
@@ -239,6 +293,43 @@ struct ProviderPanel: View {
       }
     }
     .padding(.horizontal, MenuMetrics.inset).padding(.top, 4).padding(.bottom, 2)
+  }
+
+  /// The one figure that sums up the provider, opposite its name.
+  private var headline: String? {
+    switch category {
+    case .vast: return rentedHeadline
+    case .pearl:
+      guard provider.pearl?.hashrate != nil else { return nil }
+      return provider.isFresh ? formatHashrate(provider.pearl?.hashrate) : "—"
+    case .kraken:
+      guard let kraken = provider.kraken else { return nil }
+      return provider.isFresh ? kraken.totalValue.map { kraken.money.local($0) } ?? "—" : "—"
+    case .codex, .claude, .cursor, .power: return nil
+    }
+  }
+
+  private var subtitle: String? {
+    switch category {
+    case .vast: return "GPU hosting"
+    case .pearl:
+      guard provider.isFresh, let online = provider.pearl?.onlineWorkers,
+        let count = provider.pearl?.workerCount
+      else { return provider.pearl == nil ? nil : "Kryptex pool" }
+      let window = provider.pearl?.effectiveAverageWindow.rawValue ?? "7d"
+      return "Kryptex · \(window) avg · \(online)/\(count) " + (count == 1 ? "worker" : "workers") + " online"
+    case .kraken: return provider.kraken == nil ? nil : "Spot portfolio"
+    case .codex, .claude, .cursor, .power: return nil
+    }
+  }
+
+  /// Today's portfolio change, shown under the total.
+  private var krakenChange: (text: String, fraction: Double)? {
+    guard category == .kraken, provider.isFresh, let kraken = provider.kraken,
+      let change = kraken.changeValue, let fraction = kraken.changeFraction
+    else { return nil }
+    let amount = (change < 0 ? "-" : "+") + kraken.money.local(abs(change))
+    return (amount + " · " + formatChange(fraction) + " today", fraction)
   }
 
   private var rentedHeadline: String {
@@ -363,17 +454,20 @@ func resetClock(_ date: Date) -> String {
 struct VastMenu: View {
   let provider: Provider
   let options: ProviderPreferences
+  var power = PowerContext.empty
   var style = GaugeStyle.ring
   private var utc: TimeZone { TimeZone(secondsFromGMT: 0)! }
   private var machines: [Machine] { provider.machines ?? [] }
   private var money: MoneyFormat { MoneyFormat(currency: options.currency, rates: provider.rates) }
 
-  private var figures: EarningsFigures { provider.earnings(options) }
+  private var figures: EarningsFigures { provider.earnings(options, power: power) }
   /// Both columns only when net figures exist; otherwise the single column that applies.
   private var columns: [(String, EarningsFigures.Set)] {
     switch (options.earningsView, figures.net) {
     case (.both, .some(let net)): return [("Gross", figures.gross), ("Net", net)]
     case (.net, .some(let net)): return [("Net", net)]
+    case (.net, .none): return [("Net", figures.shown(.net))]
+    case (.both, .none): return [("Gross", figures.gross), ("Net", figures.shown(.net))]
     default: return [("Gross", figures.gross)]
     }
   }
@@ -391,13 +485,15 @@ struct VastMenu: View {
         MachineRow(
           machine: machine, fresh: provider.isFresh, detailed: options.showMachineDetails,
           money: money, period: options.utilizationPeriod,
-          periodDays: provider.utilizationDays, watts: options.machineWatts[machine.id],
-          powerPrice: options.powerPrice, style: style)
+          periodDays: provider.utilizationDays, style: style)
       }
       if provider.machines == nil && provider.status != "loading" {
         menuNote("Add your Vast.ai API key in Settings to see rentals and earnings.")
       } else if machines.isEmpty && provider.machines != nil {
         menuNote("No host machines found.")
+      }
+      if options.earningsView != .gross && figures.net == nil {
+        menuNote("Net earnings need an electricity tariff and current power in Power Settings.")
       }
       if options.showEarningsHistory, let daily = provider.daily, !daily.isEmpty {
         MenuSeparator()
@@ -456,7 +552,9 @@ struct VastMenu: View {
           if columns.count > 1 { Text("") }
           Text("-" + money.local(power) + "/day").font(.system(size: 13)).monospacedDigit()
             .foregroundStyle(.secondary)
-            .help("Entered watts × 24 h × price per kWh, summed over machines.")
+            .help(
+              "Assigned power × 24 h × tariff. An estimate at the current draw, not a historical meter reading."
+            )
         }
       }
     }
@@ -470,7 +568,7 @@ struct VastMenu: View {
 
   private var columnHelp: String {
     options.earningsView != .gross && figures.net == nil
-      ? "Set an electricity price and wattages in Settings to show net figures." : ""
+      ? "Set a tariff and assign power in Power Settings to show net figures." : ""
   }
 
   private func earningsRow(
@@ -504,8 +602,6 @@ struct MachineRow: View {
   let money: MoneyFormat
   let period: UtilizationPeriod
   let periodDays: Int?
-  let watts: Double?
-  let powerPrice: Double?
   var style = GaugeStyle.ring
   private var rented: Bool { fresh && machine.status == "Rented" }
   /// The ring shows the period the collector reported, which can trail a settings change.
@@ -624,11 +720,6 @@ struct MachineRow: View {
     }
     if let price = machine.listedHourly {
       lines.append("Listed price: " + money.format(price) + "/GPU/h")
-    }
-    if let watts, let powerPrice, powerPrice > 0 {
-      lines.append(
-        String(format: "Power: %.0f W ≈ ", watts) + money.local(watts * 24 / 1000 * powerPrice)
-          + "/day")
     }
     lines.append("\(count(machine.running)) running · \(count(machine.stored)) resident")
     if let verification = machine.verification { lines.append("Verification: " + verification) }

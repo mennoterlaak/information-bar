@@ -13,6 +13,7 @@ struct RenderViews {
     defer { defaults.removePersistentDomain(forName: defaultsName) }
     defaults.set(try JSONEncoder().encode(DemoData.preferences()), forKey: "preferences.v2")
     let store = DashboardStore(defaults: defaults)
+    store.demo = true
     store.providers = DemoData.providers()
     let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -30,10 +31,22 @@ struct RenderViews {
             .environment(\.colorScheme, scheme),
           to: output.appendingPathComponent("\(category.rawValue)-\(label).png"))
       }
-      store.selectedSettings = "vast"
+      for id in ["vast", "pearl", "kraken", "power"] {
+        store.selectedSettings = id
+        try save(
+          SettingsView(store: store).environment(\.colorScheme, scheme),
+          to: output.appendingPathComponent("settings-\(id)-\(label).png"))
+      }
+      // The connection controls sit below the fold in the full Settings window.
       try save(
-        SettingsView(store: store).environment(\.colorScheme, scheme),
-        to: output.appendingPathComponent("settings-vast-\(label).png"))
+        Form { PearlSettingsSections(store: store) }
+          .formStyle(.grouped).frame(width: 620, height: 720)
+          .environment(\.colorScheme, scheme),
+        to: output.appendingPathComponent("pearl-connection-\(label).png"))
+      try save(
+        HomeWizardEditor(store: store, initial: HomeWizardDevice()).environment(
+          \.colorScheme, scheme),
+        to: output.appendingPathComponent("homewizard-editor-\(label).png"))
       // Gauge style variants.
       for style in [GaugeStyle.ringValue, .bar] {
         store.setGaugeStyle(style)
@@ -69,7 +82,7 @@ struct RenderViews {
         .environment(\.colorScheme, scheme),
         to: output.appendingPathComponent("icon-styles-\(label).png"))
     }
-    print("Rendered 22 QA images with synthetic data to \(output.path)")
+    print("Rendered QA images with synthetic data to \(output.path)")
   }
 
   @MainActor

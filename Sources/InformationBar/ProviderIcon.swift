@@ -10,6 +10,15 @@ enum ProviderArtwork {
   static func image(_ id: String, size: CGFloat = 18) -> NSImage {
     let key = "\(id)@\(size)"
     if let cached = sized[key] { return cached }
+    if id == "pearl" || id == "power" {
+      let image = NSImage(
+        systemSymbolName: id == "pearl" ? "diamond.circle" : "bolt.fill",
+        accessibilityDescription: Provider.names[id])!
+      image.size = NSSize(width: size, height: size)
+      image.isTemplate = true
+      sized[key] = image
+      return image
+    }
     if originals[id] == nil,
       let url = AppInfo.resource("Providers/\(id).svg", development: "assets/providers/\(id).svg")
     {

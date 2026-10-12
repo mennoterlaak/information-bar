@@ -78,6 +78,9 @@ struct Provider: Decodable, Identifiable {
   let ratesDate: String?
   let utilizationDays: Int?
   let utilizationError: String?
+  let pearl: PearlMetrics?
+  let powerDevices: [PowerReading]?
+  var kraken: KrakenMetrics?
 
   static func placeholder(_ id: String) -> Provider {
     let data = Data(
@@ -153,10 +156,23 @@ struct MoneyFormat {
   /// For amounts already in the display currency, such as the entered power price.
   func local(_ value: Double?, digits: Int = 2) -> String {
     guard let value else { return "—" }
-    let magnitude = String(format: "%.*f", digits, abs(value))
-    let negative = value < 0 && Double(magnitude) != 0
-    return (negative ? "-" : "") + symbol + magnitude
+    let rounded = String(format: "%.*f", digits, abs(value))
+    let negative = value < 0 && Double(rounded) != 0
+    return (negative ? "-" : "") + symbol + groupThousands(rounded)
   }
+}
+
+/// Inserts a comma between every three integer digits of a plain "1234567.89" string. Amounts
+/// always use "." for decimals, so the grouping separator is fixed rather than locale-dependent.
+func groupThousands(_ plain: String) -> String {
+  let parts = plain.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+  var digits = String(parts[0])
+  var grouped = ""
+  while digits.count > 3 {
+    grouped = "," + digits.suffix(3) + grouped
+    digits.removeLast(3)
+  }
+  return digits + grouped + (parts.count > 1 ? "." + parts[1] : "")
 }
 
 /// Parses a typed amount, accepting "," or "." as the decimal separator. Locale-aware parsing

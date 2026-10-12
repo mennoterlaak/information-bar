@@ -18,10 +18,15 @@ struct SettingsView: View {
           Text("General")
         }.tag("global")
         Section {
-          ForEach(ProviderCategory.allCases.filter { $0 != .vast }) { sidebarRow($0) }
+          ForEach(ProviderCategory.allCases.filter(\.isSubscription)) { sidebarRow($0) }
         }
         Section {
           sidebarRow(.vast)
+          sidebarRow(.pearl)
+          sidebarRow(.kraken)
+        }
+        Section {
+          sidebarRow(.power)
         }
       }
       .listStyle(.sidebar)
@@ -411,10 +416,24 @@ struct MenuBarPreview: View {
     HStack(spacing: 4) {
       Image(systemName: "apple.logo").font(.system(size: 13)).foregroundStyle(.tertiary)
       Spacer(minLength: 10)
-      ForEach(categories) { item in
+      // Like the real menu bar, items that do not fit are hidden from the left.
+      ViewThatFits(in: .horizontal) {
+        ForEach(0..<max(1, categories.count), id: \.self) { hidden in
+          items(Array(categories.dropFirst(hidden)))
+        }
+      }
+    }.padding(.horizontal, 14).frame(height: 38)
+      .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+      .accessibilityLabel("Menu bar preview")
+  }
+
+  private func items(_ shown: [ProviderCategory]) -> some View {
+    HStack(spacing: 4) {
+      ForEach(shown) { item in
         let option = store.preferences.provider(item)
         MenuBarItemView(
-          provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue), options: option
+          provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue),
+          options: option, power: store.powerContext
         ).opacity(option.enabled ? 1 : 0.35)
       }
       if categories.isEmpty {
@@ -422,9 +441,7 @@ struct MenuBarPreview: View {
           "A settings icon stays in the menu bar while every item is hidden.")
       }
       Image(systemName: "switch.2").foregroundStyle(.tertiary)
-    }.padding(.horizontal, 14).frame(height: 38)
-      .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
-      .accessibilityLabel("Menu bar preview")
+    }
   }
 }
 
@@ -435,6 +452,8 @@ struct MenuElementRow: View {
   let category: ProviderCategory
   let element: MenuElement
   let windows: [UsageWindow]
+  /// Symbols of priced holdings, for price elements.
+  var assets: [String] = []
   @State private var targeted = false
   private var elements: [MenuElement] { store.preferences.provider(category).elements }
 
@@ -457,6 +476,17 @@ struct MenuElementRow: View {
           Toggle("Label", isOn: labelBinding).toggleStyle(.checkbox)
             .help("Prefix the value with the pool's short name")
         }
+      }
+      if element.kind.usesAsset {
+        Picker("Asset", selection: assetBinding) {
+          Text("Largest holding").tag("automatic")
+          ForEach(assets, id: \.self) { Text($0).tag($0) }
+          if let selected = element.asset, !assets.contains(selected) {
+            Text(selected + " (not held)").tag(selected)
+          }
+        }.labelsHidden().frame(maxWidth: 220)
+        Toggle("Label", isOn: labelBinding).toggleStyle(.checkbox)
+          .help("Prefix the price with the asset's symbol")
       }
       Button(action: remove) {
         Image(systemName: "minus.circle").foregroundStyle(.secondary)
@@ -487,6 +517,12 @@ struct MenuElementRow: View {
 
   private var labelBinding: Binding<Bool> {
     Binding(get: { element.showLabel }, set: { value in change { $0.showLabel = value } })
+  }
+
+  private var assetBinding: Binding<String> {
+    Binding(
+      get: { element.asset ?? "automatic" },
+      set: { value in change { $0.asset = value == "automatic" ? nil : value } })
   }
 
   private func change(_ update: (inout MenuElement) -> Void) {
@@ -548,13 +584,16 @@ struct CategorySettings: View {
         MenuBarPreview(store: store, category: category)
         ForEach(options.elements) { element in
           MenuElementRow(
-            store: store, category: category, element: element, windows: provider.windows ?? [])
+            store: store, category: category, element: element, windows: provider.windows ?? [],
+            assets: provider.kraken?.tradedAssets.map(\.symbol) ?? [])
         }
         HStack {
           Menu {
             ForEach(MenuElementKind.available(for: category), id: \.self) { kind in
               Button(kind.title(for: category)) {
-                store.update(category) { $0.elements.append(MenuElement(kind)) }
+                store.update(category) {
+                  $0.elements.append(MenuElement(kind, showLabel: kind.usesAsset))
+                }
               }
             }
           } label: {
@@ -567,37 +606,47 @@ struct CategorySettings: View {
       } header: {
         sectionHeader(
           "Menu bar",
-          info: category == .vast
+          info: !category.isSubscription
             ? "Drag rows to reorder the menu bar item; the minus removes an item."
             : "Drag rows to reorder the menu bar item; the minus removes an item. Value items can follow one allowance and carry its short name, as in 5h 68%."
         )
       }
-      Section {
-        if category == .vast {
-          Toggle("7-day earnings chart", isOn: binding(\.showEarningsHistory))
-          Toggle("Machine details line", isOn: binding(\.showMachineDetails))
-        } else {
-          Toggle("Additional allowances", isOn: binding(\.showAdditional))
-          Toggle("Exact reset times", isOn: binding(\.showResetDates))
+      if category.isSubscription || category == .vast {
+        Section {
+          if category == .vast {
+            Toggle("7-day earnings chart", isOn: binding(\.showEarningsHistory))
+            Toggle("Machine details line", isOn: binding(\.showMachineDetails))
+          } else {
+            Toggle("Additional allowances", isOn: binding(\.showAdditional))
+            Toggle("Exact reset times", isOn: binding(\.showResetDates))
+          }
+        } header: {
+          sectionHeader(
+            "Dropdown",
+            info: category == .vast
+              ? "Hover a machine in the dropdown for its reported averages, temperature, reliability and CPU."
+              : "Percentages and reset times are reported by \(category.name).")
         }
-      } header: {
-        sectionHeader(
-          "Dropdown",
-          info: category == .vast
-            ? "Hover a machine in the dropdown for its reported averages, temperature, reliability and CPU."
-            : "Percentages and reset times are reported by \(category.name).")
       }
+      if category == .vast || category == .pearl { currencySettings }
       if category == .vast {
-        currencyAndPower
         utilization
       }
-      connection
+      if category == .pearl {
+        PearlSettingsSections(store: store)
+      } else if category == .kraken {
+        KrakenSettingsSections(store: store)
+      } else if category == .power {
+        PowerSettingsSections(store: store)
+      } else {
+        connection
+      }
     }
     .formStyle(.grouped)
     .navigationTitle(category.name)
   }
 
-  private var currencyAndPower: some View {
+  private var currencySettings: some View {
     Section {
       Picker("Currency", selection: binding(\.currency)) {
         Text("US dollar").tag("USD")
@@ -606,25 +655,17 @@ struct CategorySettings: View {
       if options.currency == "EUR" {
         LabeledContent("Exchange rate", value: rateDescription)
       }
-      DecimalField(
-        title: "Electricity price per kWh", value: priceBinding, prompt: "Not set",
-        suffix: options.currency, minimumDigits: 2)
-      ForEach(provider.machines ?? []) { machine in
-        DecimalField(
-          title: "\(machine.gpu) · \(machine.name)", value: wattsBinding(machine.id),
-          prompt: "Average draw", suffix: "W")
+      if category == .vast {
+        Picker("Earnings", selection: binding(\.earningsView)) {
+          ForEach(EarningsView.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
       }
-      if provider.machines?.isEmpty != false {
-        Text("Machines appear here once the account is connected.").foregroundStyle(.secondary)
-      }
-      Picker("Earnings", selection: binding(\.earningsView)) {
-        ForEach(EarningsView.allCases, id: \.self) { Text($0.title).tag($0) }
-      }
+      Button("Configure electricity & meters…") { store.selectedSettings = "power" }
     } header: {
       sectionHeader(
-        "Currency & power",
+        "Earnings",
         info:
-          "Euro amounts use the European Central Bank reference rate via api.frankfurter.dev, refreshed every 12 hours. Power cost is each machine's watts × 24 h × the price per kWh. Net earnings deduct it: today for the hours elapsed since 00:00 UTC, the rate per hour, and the 7-day average per day. Gross shows recorded revenue; Both shows two columns."
+          "Euro amounts use the ECB reference rate. The electricity tariff and meters are managed separately in Power. Pearl profit always deducts mining fees and assigned power costs."
       )
     }
   }
@@ -635,28 +676,6 @@ struct CategorySettings: View {
         + (provider.ratesDate.map { " · ECB \($0)" } ?? "")
     }
     return provider.updatedAt == nil ? "Fetching…" : "Unavailable, amounts stay in USD"
-  }
-
-  private var priceBinding: Binding<Double?> {
-    Binding(
-      get: { options.powerPrice },
-      set: { value in
-        store.update(category) { $0.powerPrice = (value ?? 0) > 0 ? value : nil }
-      })
-  }
-
-  private func wattsBinding(_ id: String) -> Binding<Double?> {
-    Binding(
-      get: { options.machineWatts[id] },
-      set: { value in
-        store.update(category) {
-          if let value, value > 0 {
-            $0.machineWatts[id] = value
-          } else {
-            $0.machineWatts.removeValue(forKey: id)
-          }
-        }
-      })
   }
 
   private var utilization: some View {

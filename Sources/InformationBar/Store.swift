@@ -7,16 +7,17 @@ import SwiftUI
 enum CredentialStore {
   static let service = "dev.starecat.InformationBar"
   static let account = "vastai-api-key"
+  static let krakenAccount = "kraken-api-key"
 
-  static var query: [String: Any] {
+  static func query(_ account: String) -> [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service, kSecAttrAccount as String: account,
     ]
   }
 
-  static func read() -> String? {
-    var query = self.query
+  static func read(account: String = account) -> String? {
+    var query = self.query(account)
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
@@ -26,7 +27,8 @@ enum CredentialStore {
     return String(data: data, encoding: .utf8)
   }
 
-  static func save(_ key: String) throws {
+  static func save(_ key: String, account: String = account) throws {
+    let query = self.query(account)
     let data = Data(key.utf8)
     let status = SecItemUpdate(
       query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
@@ -42,6 +44,8 @@ enum CredentialStore {
       throw AppError.message("macOS could not update the key in Keychain (\(status)).")
     }
   }
+
+  static func delete(account: String) { SecItemDelete(query(account) as CFDictionary) }
 }
 
 enum AppError: LocalizedError {
@@ -81,7 +85,9 @@ enum AppInfo {
 }
 
 enum Collector {
-  static func run(arguments: [String], key: String? = nil) throws -> Data {
+  static func run(arguments: [String], key: String? = nil, configuration: Data? = nil) throws
+    -> Data
+  {
     let manager = FileManager.default
     let candidates = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
     guard let python = candidates.first(where: { manager.isExecutableFile(atPath: $0) }) else {
@@ -106,7 +112,10 @@ enum Collector {
     process.standardOutput = output
     process.standardError = FileHandle.nullDevice
     try process.run()
-    let payload = try JSONSerialization.data(withJSONObject: key.map { ["vastKey": $0] } ?? [:])
+    var values =
+      configuration.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    if let key { values["vastKey"] = key }
+    let payload = try JSONSerialization.data(withJSONObject: values)
     try input.fileHandleForWriting.write(contentsOf: payload)
     try input.fileHandleForWriting.close()
     // All network/CLI calls also have their own, shorter timeouts.
@@ -141,6 +150,10 @@ final class DashboardStore: ObservableObject {
   @Published var loginMessage: String?
   @Published var validatingKey = false
   @Published var keyConnected = false
+  @Published var krakenMessage: String?
+  @Published var validatingKraken = false
+  @Published var krakenConnected = false
+  @Published private(set) var krakenFeed = KrakenFeedState.off
   @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
   @Published private(set) var preferences: AppPreferences
   @Published var selectedSettings = "global"
@@ -151,10 +164,20 @@ final class DashboardStore: ObservableObject {
   @Published var iconTheme = UserDefaults.standard.AppleIconAppearanceTheme ?? "Regular"
   private var iconThemeObservation: NSKeyValueObservation?
   var onUpdate: (() -> Void)?
+  /// Live Kraken prices changed; only the Kraken item needs redrawing.
+  var onLivePrices: (() -> Void)?
+  private let priceFeed = KrakenPriceFeed()
+  /// The collector's latest Kraken result, before live prices are applied.
+  private var krakenBase: Provider?
   private var timer: Timer?
   private var lastRefresh = Date.distantPast
   private var wakeObserver: NSObjectProtocol?
   private let defaults: UserDefaults
+  private var generations: [String: Int] = [:]
+
+  var powerContext: PowerContext {
+    PowerContext(preferences: preferences.power, provider: providers["power"])
+  }
 
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
@@ -166,6 +189,13 @@ final class DashboardStore: ObservableObject {
       let theme = change.newValue.flatMap { $0 } ?? "Regular"
       Task { @MainActor in self?.iconTheme = theme }
     }
+    priceFeed.onPrices = { [weak self] in self?.applyLivePrices() }
+    // Prices only reach the menu bar through the throttled onPrices; each market's first
+    // snapshot changes the state, and redrawing for every one would defeat the throttle.
+    priceFeed.onState = { [weak self] in
+      guard let self else { return }
+      krakenFeed = priceFeed.state
+    }
   }
 
   func update(_ category: ProviderCategory, _ change: (inout ProviderPreferences) -> Void) {
@@ -174,6 +204,102 @@ final class DashboardStore: ObservableObject {
     preferences.providers[category.rawValue] = item
     persistPreferences()
     if item.enabled { refresh(only: category.rawValue) }
+  }
+
+  func updatePearl(_ change: (inout PearlPreferences) -> Void) {
+    change(&preferences.pearl)
+    persistPreferences()
+    invalidate("pearl")
+  }
+
+  func updatePower(_ change: (inout PowerPreferences) -> Void) {
+    let oldDevices = preferences.power.devices
+    change(&preferences.power)
+    persistPreferences()
+    if oldDevices != preferences.power.devices { invalidate("power") }
+  }
+
+  private func invalidate(_ id: String) {
+    generations[id, default: 0] += 1
+    if id == "kraken" {
+      krakenBase = nil
+      syncPriceFeed()
+    }
+    providers[id] = .placeholder(id)
+    refresh(force: true, only: id)
+  }
+
+  /// Streams the markets behind the portfolio's prices while the Kraken item is shown, live
+  /// prices are on and the balances are current.
+  private func syncPriceFeed() {
+    let options = preferences.provider(.kraken)
+    let kraken = krakenBase?.isFresh == true ? krakenBase?.kraken : nil
+    priceFeed.stream(
+      kraken?.liveSymbols ?? [],
+      enabled: !demo && options.enabled && options.livePrices && kraken?.totalValue != nil)
+    applyLivePrices()
+  }
+
+  private func applyLivePrices() {
+    guard let base = krakenBase else { return }
+    let fetched = Date(timeIntervalSince1970: base.updatedAt ?? 0)
+    providers["kraken"] = base.repriced(priceFeed.prices(after: fetched))
+    onLivePrices?()
+  }
+
+  func saveDevice(_ device: HomeWizardDevice, token: String) throws {
+    if let error = device.validationError { throw AppError.message(error) }
+    if preferences.power.alreadyContains(device) {
+      throw AppError.message("This meter is already configured. Edit the existing meter instead.")
+    }
+    if !demo && !token.isEmpty && device.apiVersion == "v2" {
+      try CredentialStore.save(
+        token.trimmingCharacters(in: .whitespacesAndNewlines), account: device.credentialAccount)
+    }
+    if device.apiVersion == "v2" && !demo
+      && CredentialStore.read(account: device.credentialAccount) == nil
+    {
+      throw AppError.message("Enter the HomeWizard API token for this device.")
+    }
+    updatePower { power in
+      if let index = power.devices.firstIndex(where: { $0.id == device.id }) {
+        power.devices[index] = device
+      } else {
+        power.devices.append(device)
+      }
+    }
+    // A replaced token needs a refresh even if no other field changed.
+    if !token.isEmpty { invalidate("power") }
+  }
+
+  func removeDevice(_ device: HomeWizardDevice) {
+    if !demo { CredentialStore.delete(account: device.credentialAccount) }
+    updatePower {
+      $0.devices.removeAll { $0.id == device.id }
+      if $0.displayDeviceID == device.id { $0.displayDeviceID = nil }
+    }
+  }
+
+  private func collectorConfiguration(_ id: String) throws -> Data? {
+    if id == "pearl" {
+      return try JSONEncoder().encode(["pearl": preferences.pearl])
+    }
+    if id == "power" {
+      var tokens: [String: String] = [:]
+      for device in preferences.power.devices where device.apiVersion == "v2" {
+        if let token = CredentialStore.read(account: device.credentialAccount) {
+          tokens[device.id] = token
+        }
+      }
+      let config = try JSONSerialization.jsonObject(with: JSONEncoder().encode(preferences.power))
+      return try JSONSerialization.data(withJSONObject: ["power": config, "deviceTokens": tokens])
+    }
+    if id == "kraken" {
+      let credentials = KrakenCredentials.load()
+      krakenConnected = credentials != nil
+      return try JSONEncoder().encode(["kraken": credentials])
+    }
+    return nil
   }
 
   func setTheme(_ value: AppTheme) {
@@ -196,16 +322,20 @@ final class DashboardStore: ObservableObject {
     if let data = try? JSONEncoder().encode(preferences) {
       defaults.set(data, forKey: "preferences.v2")
     }
+    syncPriceFeed()
     onUpdate?()
   }
 
   func start() {
-    keyConnected = demo || CredentialStore.read() != nil
+    keyConnected = demo
+    krakenConnected = demo
     refresh()
     timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
       Task { @MainActor in
         guard let self else { return }
         self.tick = Date()
+        // Balances can go stale without a new result arriving.
+        self.syncPriceFeed()
         self.onUpdate?()
         if Date().timeIntervalSince(self.lastRefresh) >= Double(self.preferences.refreshInterval) {
           self.refresh()
@@ -224,27 +354,54 @@ final class DashboardStore: ObservableObject {
     if only == nil { lastRefresh = Date() }
     for id in only.map({ [$0] }) ?? ProviderCategory.allCases.map(\.rawValue)
     where !refreshing.contains(id) {
+      // Hidden Vast hosting or Kraken should not prompt for a key or block unrelated providers at
+      // launch. Explicit refreshes from their settings still read the saved key.
+      if let category = ProviderCategory(rawValue: id), category == .vast || category == .kraken,
+        only == nil, !preferences.provider(category).enabled
+      {
+        continue
+      }
       refreshing.insert(id)
       collectorErrors[id] = nil
       let key = id == "vast" ? CredentialStore.read() : nil
+      if id == "vast" { keyConnected = key != nil }
+      let generation = generations[id, default: 0]
+      let configuration: Data?
+      do { configuration = try collectorConfiguration(id) } catch {
+        collectorErrors[id] = "Could not read the connection settings."
+        refreshing.remove(id)
+        continue
+      }
       var arguments = ["--provider", id] + (force ? ["--force"] : [])
-      if id == "vast" {
-        let vast = preferences.provider(.vast)
+      if id == "vast" || id == "pearl" {
+        let vast = preferences.provider(ProviderCategory(rawValue: id)!)
         arguments += [
           "--currency", vast.currency, "--utilization-days", String(vast.utilizationPeriod.days),
         ]
       }
+      if id == "kraken" { arguments += ["--currency", preferences.provider(.kraken).currency] }
       Task {
         do {
           let data = try await Task.detached(priority: .utility) {
-            try Collector.run(arguments: arguments, key: key)
+            try Collector.run(arguments: arguments, key: key, configuration: configuration)
           }.value
-          providers[id] = try JSONDecoder().decode(Provider.self, from: data)
+          if generations[id, default: 0] == generation {
+            let provider = try JSONDecoder().decode(Provider.self, from: data)
+            if id == "kraken" {
+              krakenBase = provider
+              syncPriceFeed()
+            } else {
+              providers[id] = provider
+            }
+          }
         } catch {
-          collectorErrors[id] = error.localizedDescription
+          if generations[id, default: 0] == generation {
+            collectorErrors[id] = error.localizedDescription
+          }
         }
         refreshing.remove(id)
         onUpdate?()
+        if generations[id, default: 0] != generation { refresh(force: true, only: id) }
       }
     }
   }
@@ -269,10 +426,7 @@ final class DashboardStore: ObservableObject {
       }
       try CredentialStore.save(key)
       keyConnected = true
-      // Only this app's sanitized Vast cache is invalidated after changing its credential.
-      let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
-        "Library/Application Support/Information Bar/Cache/vast.json")
-      try? FileManager.default.removeItem(at: cache)
+      removeCache("vast")
       settingsMessage = "Connected. Your key is stored in macOS Keychain."
       refresh(force: true, only: "vast")
       return true
@@ -280,6 +434,57 @@ final class DashboardStore: ObservableObject {
       settingsMessage = error.localizedDescription
       return false
     }
+  }
+
+  /// Validates both keys with one Balance request before anything is saved.
+  func saveKraken(apiKey: String, privateKey: String) async -> Bool {
+    let credentials = KrakenCredentials(
+      apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+      privateKey: privateKey.trimmingCharacters(in: .whitespacesAndNewlines))
+    guard !credentials.apiKey.isEmpty, !credentials.privateKey.isEmpty else {
+      krakenMessage = "Enter both the API key and the private key."
+      return false
+    }
+    validatingKraken = true
+    krakenMessage = nil
+    defer { validatingKraken = false }
+    do {
+      let configuration = try JSONEncoder().encode(["kraken": credentials])
+      let data = try await Task.detached(priority: .utility) {
+        try Collector.run(arguments: ["--validate-kraken-key"], configuration: configuration)
+      }.value
+      let response = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+      guard response?["valid"] as? Bool == true else {
+        krakenMessage = response?["error"] as? String ?? "Could not validate the API key."
+        return false
+      }
+      try CredentialStore.save(
+        String(decoding: try JSONEncoder().encode(credentials), as: UTF8.self),
+        account: CredentialStore.krakenAccount)
+      krakenConnected = true
+      removeCache("kraken")
+      krakenMessage = "Connected. Your keys are stored in macOS Keychain."
+      invalidate("kraken")
+      return true
+    } catch {
+      krakenMessage = error.localizedDescription
+      return false
+    }
+  }
+
+  func disconnectKraken() {
+    CredentialStore.delete(account: CredentialStore.krakenAccount)
+    krakenConnected = false
+    removeCache("kraken")
+    krakenMessage = "Disconnected. Both keys were removed from Keychain."
+    invalidate("kraken")
+  }
+
+  /// Only this app's sanitized cache for the provider, after its credential changed.
+  private func removeCache(_ id: String) {
+    let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+      "Library/Application Support/Information Bar/Cache/\(id).json")
+    try? FileManager.default.removeItem(at: cache)
   }
 
   func setLaunchAtLogin(_ enabled: Bool) {

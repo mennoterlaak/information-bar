@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarItemView: View {
   let provider: Provider
   let options: ProviderPreferences
+  var power = PowerContext.empty
 
   var body: some View {
     HStack(spacing: 5) {
@@ -29,7 +30,7 @@ struct MenuBarItemView: View {
     case .earningsGraph:
       MenuBarsGlyph(values: provider.isFresh ? (provider.daily ?? []).map(\.amount) : [])
     default:
-      Text(provider.text(for: element, preferences: options) ?? "—")
+      Text(provider.text(for: element, preferences: options, power: power) ?? "—")
         .font(.system(size: 11, weight: .medium)).monospacedDigit().lineLimit(1)
     }
   }
