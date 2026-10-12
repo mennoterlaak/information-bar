@@ -60,8 +60,9 @@ enum DemoData {
       "id": "pearl", "name": "Pearl", "status": "ok", "updatedAt": now,
       "url": "https://pool.kryptex.com/prl", "rates": ["EUR": 0.86],
       "pearl": [
-        "priceUSD": 1.11, "priceUpdatedAt": now, "hashrate": 321.6e12,
-        "hashrate3h": 328.6e12, "hashrate24h": 316.4e12,
+        "priceUSD": 1.11, "priceUpdatedAt": now, "hashrate": 312.8e12, "averageWindow": "7d",
+        "hashrate30m": 321.6e12, "hashrate3h": 328.6e12, "hashrate24h": 316.4e12,
+        "hashrate7d": 312.8e12, "historyUpdatedAt": now - 600,
         "onlineWorkers": 1, "workerCount": 1, "coinsPerDay": 6.47, "poolFeePercent": 2,
         "walletBalance": 7.63170958, "poolBalance": 2.70568857,
         "poolConfirmed": 0.78614168, "poolUnconfirmed": 1.91954689,

@@ -37,6 +37,12 @@ struct RenderViews {
           SettingsView(store: store).environment(\.colorScheme, scheme),
           to: output.appendingPathComponent("settings-\(id)-\(label).png"))
       }
+      // The connection controls sit below the fold in the full Settings window.
+      try save(
+        Form { PearlSettingsSections(store: store) }
+          .formStyle(.grouped).frame(width: 620, height: 720)
+          .environment(\.colorScheme, scheme),
+        to: output.appendingPathComponent("pearl-connection-\(label).png"))
       try save(
         HomeWizardEditor(store: store, initial: HomeWizardDevice()).environment(
           \.colorScheme, scheme),

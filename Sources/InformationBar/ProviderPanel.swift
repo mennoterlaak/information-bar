@@ -316,7 +316,8 @@ struct ProviderPanel: View {
       guard provider.isFresh, let online = provider.pearl?.onlineWorkers,
         let count = provider.pearl?.workerCount
       else { return provider.pearl == nil ? nil : "Kryptex pool" }
-      return "Kryptex · \(online) of \(count) " + (count == 1 ? "worker" : "workers") + " online"
+      let window = provider.pearl?.effectiveAverageWindow.rawValue ?? "7d"
+      return "Kryptex · \(window) avg · \(online)/\(count) " + (count == 1 ? "worker" : "workers") + " online"
     case .kraken: return provider.kraken == nil ? nil : "Spot portfolio"
     case .codex, .claude, .cursor, .power: return nil
     }

@@ -24,6 +24,12 @@ class MiningTests(unittest.TestCase):
             stub = patch.object(c, name, return_value={})
             stub.start()
             self.addCleanup(stub.stop)
+        for name, value in (
+                ("pearl_history", {"hashrate7d": 300e12, "historyUpdatedAt": 1000}),
+                ("pearl_pool", {"ticker": "prl", "estimated_profit_day": 2e-14, "fee": .02})):
+            stub = patch.object(c, name, return_value=value)
+            stub.start()
+            self.addCleanup(stub.stop)
 
     def test_pool_hashrate_uses_hs_and_filters_the_selected_worker(self):
         data = {"results": [pool_worker(), pool_worker("second", avg_hashrate_30m="50000000000000")]}
@@ -101,6 +107,50 @@ class MiningTests(unittest.TestCase):
         self.assertNotIn("coinsPerDay", result["pearl"])
         self.assertIn("PPS+", result["error"])
 
+    def test_selected_average_drives_headline_and_yield_with_week_as_default(self):
+        for window, expected in ((None, 300e12), ("30m", 400e12), ("3h", 290e12), ("24h", 280e12), ("7d", 300e12)):
+            with self.subTest(window=window), tempfile.TemporaryDirectory() as root, \
+                    patch.object(c, "pearl_price", return_value={"priceUSD": 1, "updatedAt": 1000}), \
+                    patch.object(c, "pearl_workers", return_value=c.parse_pool_workers(
+                        {"results": [pool_worker(avg_hashrate_30m=400e12)]}, WALLET)):
+                config = {"walletAddress": WALLET}
+                if window is not None:
+                    config["averageWindow"] = window
+                result = c.fetch_pearl(config, Path(root))
+            self.assertNotIn("error", result)
+            self.assertEqual(result["pearl"]["averageWindow"], window or "7d")
+            self.assertEqual(result["pearl"]["hashrate"], expected)
+            self.assertEqual(result["pearl"]["hashrate30m"], 400e12)
+            self.assertAlmostEqual(result["pearl"]["coinsPerDay"], expected * 2e-14 * .98)
+
+    def test_missing_selected_average_does_not_fall_back_or_erase_other_metrics(self):
+        for window in ("7d", "3h", "30m"):
+            with self.subTest(window=window), tempfile.TemporaryDirectory() as root, \
+                    patch.object(c, "pearl_price", return_value={"priceUSD": 1, "updatedAt": 1000}), \
+                    patch.object(c, "pearl_workers", return_value=c.parse_pool_workers(
+                        {"results": [pool_worker(avg_hashrate_3h=None)]}, WALLET)), \
+                    patch.object(c, "pearl_history", side_effect=c.SourceError("History unavailable.")):
+                result = c.fetch_pearl({"walletAddress": WALLET, "averageWindow": window}, Path(root))
+            self.assertEqual(result["pearl"]["priceUSD"], 1)
+            self.assertEqual(result["pearl"]["hashrate30m"], 300e12)
+            if window == "30m":
+                self.assertNotIn("error", result)
+                self.assertAlmostEqual(result["pearl"]["coinsPerDay"], 5.88)
+            else:
+                self.assertEqual(result["status"], "partial")
+                self.assertNotIn("hashrate", result["pearl"])
+                self.assertNotIn("coinsPerDay", result["pearl"])
+
+    def test_offline_worker_keeps_selected_weekly_average_and_zero_current_rate(self):
+        with tempfile.TemporaryDirectory() as root, \
+                patch.object(c, "pearl_price", return_value={"priceUSD": 1, "updatedAt": 1000}), \
+                patch.object(c, "pearl_workers", return_value=c.parse_pool_workers(
+                    {"results": [pool_worker(status="offline")]}, WALLET)):
+            result = c.fetch_pearl({"walletAddress": WALLET}, Path(root))
+        self.assertEqual(result["pearl"]["hashrate"], 300e12)
+        self.assertEqual(result["pearl"]["hashrate30m"], 0)
+        self.assertEqual(result["pearl"]["onlineWorkers"], 0)
+
     def test_worker_cache_is_private_and_separate_for_each_selection(self):
         with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", return_value={"results": [pool_worker()]} ) as request:
             first = {"walletAddress": WALLET, "workerName": "rtx4090"}
@@ -148,7 +198,105 @@ class MiningTests(unittest.TestCase):
             self.assertEqual(json.loads((Path(root) / "pearl-price.json").read_text())["nextRetryAt"], 10600)
 
 
+class HashrateHistoryTests(unittest.TestCase):
+    now = 1_800_000_000
+
+    def history(self):
+        return [{"timestamp": (self.now - 7 * 86400 + index * 600) * 1000,
+                 "hashrate": 300e12, "avg_hashrate_30m": 999e12, "avg_hashrate_3h": 999e12}
+                for index in range(1009)]
+
+    def test_full_week_uses_raw_hashrate_and_includes_zero_intervals(self):
+        data = self.history()
+        for row in data[:504]:
+            row["hashrate"] = 0
+        # The last timestamp bounds the window; no duration is invented beyond it.
+        data[-1]["hashrate"] = 999e12
+        with patch.object(c.time, "time", return_value=self.now + 600):
+            result = c.parse_pearl_history(list(reversed(data)))
+        self.assertEqual(result, {"hashrate7d": 150e12, "historyUpdatedAt": self.now})
+
+    def test_accepts_seconds_and_numeric_strings_and_clips_older_history(self):
+        data = [{"timestamp": (self.now - 8 * 86400) * 1000, "hashrate": 999e12}] + self.history()
+        for row in data:
+            row["timestamp"] = str(row["timestamp"] / 1000)
+            row["hashrate"] = str(row["hashrate"])
+        with patch.object(c.time, "time", return_value=self.now):
+            self.assertEqual(c.parse_pearl_history(data)["hashrate7d"], 300e12)
+
+    def test_rejects_short_missing_duplicate_stale_future_and_malformed_history(self):
+        data = self.history()
+        for bad in ({}, [], [None], data[1:], data[:500] + data[501:], data + [data[-1]],
+                    [{**row, "timestamp": row["timestamp"] - 1_800_000} for row in data],
+                    [{**row, "timestamp": row["timestamp"] + 600_000} for row in data]):
+            with self.subTest(case=str(bad)[:80]), patch.object(c.time, "time", return_value=self.now), \
+                    self.assertRaises(c.SourceError):
+                c.parse_pearl_history(bad)
+        for field, values in (("hashrate", [-1, None, True, "nan", "Infinity", []]),
+                              ("timestamp", [None, True, "invalid", "Infinity"])):
+            for value in values:
+                bad = self.history()
+                bad[500][field] = value
+                with self.subTest(field=field, value=value), patch.object(c.time, "time", return_value=self.now), \
+                        self.assertRaises(c.SourceError):
+                    c.parse_pearl_history(bad)
+
+    def test_history_cache_separates_wallet_and_worker_and_keeps_only_private_metrics(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(c.time, "time", return_value=self.now), \
+                patch.object(c, "request_json", return_value=self.history()) as request:
+            config = {"walletAddress": WALLET, "workerName": "rig / 1"}
+            c.pearl_history(config, Path(root))
+            c.pearl_history({**config, "averageWindow": "30m"}, Path(root))
+            self.assertEqual(request.call_count, 1)
+            self.assertTrue(request.call_args.args[0].endswith("/rig%20%2F%201?days=7"))
+            self.assertEqual(request.call_args.kwargs["response_type"], list)
+            c.pearl_history({"walletAddress": WALLET}, Path(root))
+            self.assertTrue(request.call_args.args[0].endswith(WALLET + "?days=7"))
+            c.pearl_history({"walletAddress": "prl1" + "y" * 59}, Path(root))
+            self.assertEqual(request.call_count, 3)
+            for path in Path(root).glob("*.json"):
+                self.assertNotIn(WALLET, path.read_text())
+                self.assertNotIn("rig", path.read_text())
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_history_backoff_and_cached_freshness(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(c.time, "time", return_value=self.now), \
+                patch.object(c, "request_json", side_effect=c.HTTPFailure(429, retry_after=600)) as request:
+            for _ in range(2):
+                with self.assertRaises(c.SourceError):
+                    c.pearl_history({"walletAddress": WALLET}, Path(root))
+            self.assertEqual(request.call_count, 1)
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", return_value=self.history()) as request:
+            with patch.object(c.time, "time", return_value=self.now + 1700):
+                c.pearl_history({"walletAddress": WALLET}, Path(root))
+            with patch.object(c.time, "time", return_value=self.now + 1800), self.assertRaises(c.SourceError):
+                c.pearl_history({"walletAddress": WALLET}, Path(root))
+            self.assertEqual(request.call_count, 1)
+
+    def test_window_changes_and_old_collector_cache_force_a_refresh(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(c.time, "time", return_value=self.now), \
+                patch.object(c, "fetch_pearl", return_value={"pearl": {}}) as fetch, \
+                patch.object(c, "exchange_rate", return_value=None):
+            config = {"walletAddress": WALLET, "averageWindow": "7d"}
+            c.collect("pearl", config=config, cache_dir=root)
+            c.collect("pearl", config=config, cache_dir=root)
+            self.assertEqual(fetch.call_count, 1)
+            c.collect("pearl", config={**config, "averageWindow": "3h"}, cache_dir=root)
+            self.assertEqual(fetch.call_count, 2)
+            path = Path(root) / "pearl.json"
+            cached = json.loads(path.read_text())
+            cached["configKey"] = cached["configKey"].replace("kryptex-average-v2:", "kryptex-wallet-v1:")
+            path.write_text(json.dumps(cached))
+            c.collect("pearl", config={**config, "averageWindow": "3h"}, cache_dir=root)
+            self.assertEqual(fetch.call_count, 3)
+
+
 class WalletTests(unittest.TestCase):
+    def setUp(self):
+        stub = patch.object(c, "pearl_history", return_value={"hashrate7d": 300e12, "historyUpdatedAt": 1000})
+        stub.start()
+        self.addCleanup(stub.stop)
+
     def test_wallet_uses_confirmed_base_units_not_total_received(self):
         result = c.parse_pearl_wallet({"address": WALLET, "balance": "763170958", "totalReceived": "999999999"}, WALLET)
         self.assertAlmostEqual(result["walletBalance"], 7.63170958)

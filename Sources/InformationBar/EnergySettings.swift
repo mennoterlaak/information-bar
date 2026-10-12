@@ -11,10 +11,17 @@ struct PearlSettingsSections: View {
       TextField(
         "PRL wallet address", text: $draft.walletAddress, prompt: Text("prl1…"))
       TextField("Worker", text: $draft.workerName, prompt: Text("All workers"))
+      Picker("Hashrate average", selection: $draft.averageWindow) {
+        ForEach(PearlAverageWindow.allCases, id: \.self) { window in
+          Text(window.title).tag(window)
+        }
+      }
       Text("Reads your accepted hashrate directly from Kryptex. Leave Worker empty to include all workers for this wallet.")
         .font(.callout).foregroundStyle(.secondary)
-      if provider.isFresh, let hashrate = provider.pearl?.hashrate {
-        LabeledContent("Pool hashrate · 30m", value: formatHashrate(hashrate))
+      Text("The selected average drives the menu bar and projections. Seven days smooths short-term share fluctuations using pool history, including recorded downtime.")
+        .font(.callout).foregroundStyle(.secondary)
+      if provider.isFresh, let metrics = provider.pearl, let hashrate = metrics.hashrate {
+        LabeledContent("Pool hashrate · \(metrics.effectiveAverageWindow.rawValue)", value: formatHashrate(hashrate))
       }
       if let error = message ?? store.collectorErrors["pearl"] ?? provider.error {
         Text(error).font(.callout).foregroundStyle(.orange).fixedSize(
@@ -46,11 +53,11 @@ struct PearlSettingsSections: View {
     }
     Section("Profit projections") {
       Text(
-        "Hourly, daily, weekly and 30-day monthly estimates use the pool's 30-minute hashrate, PRL price and Kryptex PPS+ yield after the pool fee. Accepted hashrate already reflects time spent mining developer fees. Profit also deducts the electricity assigned to Pearl in Power Settings."
+        "Hourly, daily, weekly and 30-day monthly estimates use your selected hashrate average, the current PRL price and Kryptex PPS+ yield after the pool fee. Accepted hashrate already reflects time spent mining developer fees. Profit also deducts the electricity assigned to Pearl in Power Settings."
       )
       .font(.callout).foregroundStyle(.secondary)
       Text(
-        "Assumes continuous mining at the current rate. Hardware, taxes, exchange and payout costs are excluded."
+        "Assumes the selected average continues at today's price, yield and measured power draw. These are projections, not past earnings. Hardware, taxes, exchange and payout costs are excluded."
       )
       .font(.caption).foregroundStyle(.secondary)
     }
