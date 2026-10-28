@@ -119,11 +119,13 @@ struct KrakenCredentials: Codable, Equatable {
   var privateKey: String
 
   /// Both keys live in one Keychain item, so a rebuilt app asks for access once.
+  #if os(macOS)
   static func load() -> KrakenCredentials? {
     CredentialStore.read(account: CredentialStore.krakenAccount).flatMap {
       try? JSONDecoder().decode(Self.self, from: Data($0.utf8))
     }
   }
+  #endif
 }
 
 /// An asset quantity at Kraken's display precision, without trailing zeros.
