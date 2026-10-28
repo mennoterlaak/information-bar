@@ -197,6 +197,7 @@ enum DemoData {
     ]
   }
 
+  #if os(macOS)
   static func discoveredMeters() -> [DiscoveredHomeWizard] {
     [
       DiscoveredHomeWizard(
@@ -220,6 +221,7 @@ enum DemoData {
         addresses: ["192.168.1.24"]),
     ].compactMap { $0 }
   }
+  #endif
 
   private static func decode(_ raw: [String: Any]) -> Provider {
     // swiftlint:disable:next force_try

@@ -1,0 +1,672 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		044B472AEE230AC1D42CD2FE /* KrakenModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FFA4D9DD359AC469BBA56BB /* KrakenModels.swift */; };
+		0847FC81C2C18E28046E570D /* EnergyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A10E22774B31D7E158AE2C0 /* EnergyModels.swift */; };
+		09334AA1199814F56F41EDA4 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ED1D88C5CB5270B666DE0FF3 /* PrivacyInfo.xcprivacy */; };
+		0C12AF9E0B3391FEBF87AE2D /* MobileSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCD15A9E81384B3F1DAEEDBF /* MobileSnapshot.swift */; };
+		1D2E1C7C8AC1CAFC8C9DCE82 /* InformationWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDA3AC351EBF2CB6783D64C6 /* InformationWidgets.swift */; };
+		2A2180EB5A1D824590A8D0E9 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F640CB382C0E319459810E0D /* Preferences.swift */; };
+		385A1AD2D2536ED81DC9B9F6 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9933AFF1EA1D7CB05FCC2576 /* DashboardView.swift */; };
+		4315773BD7B5F61FBB910930 /* Preferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F640CB382C0E319459810E0D /* Preferences.swift */; };
+		4B90E3595C1FC46EC84FA2D1 /* MobileSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCD15A9E81384B3F1DAEEDBF /* MobileSnapshot.swift */; };
+		6524566B88B145FA2DE9B6D2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ED1D88C5CB5270B666DE0FF3 /* PrivacyInfo.xcprivacy */; };
+		671296E3C89659C0F9F8F635 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BFEE356FDAA946F962666C6E /* Assets.xcassets */; };
+		6DEB48380A3CEBC4AE9A9109 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BFEE356FDAA946F962666C6E /* Assets.xcassets */; };
+		7B139C02EB55D5531E3E07C0 /* MobileSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 904EB4CD6784228A3B6C7D9B /* MobileSync.swift */; };
+		7D531FB545632D34883C635A /* MobileSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC645D162A2F1805B9E31B7 /* MobileSnapshotTests.swift */; };
+		7DC8211E5BB8DF5900909058 /* InformationBarWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1B50388064804C8A6BCFDAE3 /* InformationBarWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		82154CE19686F48F609EDBB3 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BB24C6E440105462E1D9C89 /* Models.swift */; };
+		862AB71E35D32066958F031F /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 457E8EBFED5476FB4FCC94F3 /* DemoData.swift */; };
+		8A7A437F5ADED6B8ED456DD4 /* MobileSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 904EB4CD6784228A3B6C7D9B /* MobileSync.swift */; };
+		8F903AA8393683B71BB8750A /* InformationBarMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BD4274F8FF1E9B8745CE1A6 /* InformationBarMobileApp.swift */; };
+		A4E4765102C000592FCC22FD /* EnergyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A10E22774B31D7E158AE2C0 /* EnergyModels.swift */; };
+		A837B38FC52619BB3FB11C38 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BB24C6E440105462E1D9C89 /* Models.swift */; };
+		B6B0C2A8C5FC64E4D5E01689 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 457E8EBFED5476FB4FCC94F3 /* DemoData.swift */; };
+		D422451634978E043D229E82 /* KrakenModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FFA4D9DD359AC469BBA56BB /* KrakenModels.swift */; };
+		D5889B7E3BCF31EAD49D6BF3 /* MobileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F192B68EF72AFC6F3962E59 /* MobileStore.swift */; };
+		E6802D449E6E82C665400CF1 /* MobilePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38BE10C0E6A769392E4DBA12 /* MobilePresentation.swift */; };
+		EF37611FBBA8B3C28C86C8CE /* MobilePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB0264D2AD80027958B9F45D /* MobilePresentationTests.swift */; };
+		F0C4AE23F26A398214367643 /* MobilePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38BE10C0E6A769392E4DBA12 /* MobilePresentation.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		901FCFD774C20C09E23AD2A0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 50D6AE30C1491C02F9D0BEDD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A29CF9C44E2CFE17FAABD28C;
+			remoteInfo = InformationBarWidgets;
+		};
+		F25DCCD4C9AFC35AB0E3275F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 50D6AE30C1491C02F9D0BEDD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AF412912BF732CBC496AA7FB;
+			remoteInfo = InformationBarMobile;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E1F7E32902B2A4125E5CACA8 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7DC8211E5BB8DF5900909058 /* InformationBarWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		1B50388064804C8A6BCFDAE3 /* InformationBarWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = InformationBarWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		2BC645D162A2F1805B9E31B7 /* MobileSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSnapshotTests.swift; sourceTree = "<group>"; };
+		32BF1DC9B8053939AC78391E /* InformationBarMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = InformationBarMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		38BE10C0E6A769392E4DBA12 /* MobilePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobilePresentation.swift; sourceTree = "<group>"; };
+		457E8EBFED5476FB4FCC94F3 /* DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoData.swift; sourceTree = "<group>"; };
+		5FFA4D9DD359AC469BBA56BB /* KrakenModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KrakenModels.swift; sourceTree = "<group>"; };
+		6BD4274F8FF1E9B8745CE1A6 /* InformationBarMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InformationBarMobileApp.swift; sourceTree = "<group>"; };
+		8A10E22774B31D7E158AE2C0 /* EnergyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyModels.swift; sourceTree = "<group>"; };
+		8F192B68EF72AFC6F3962E59 /* MobileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileStore.swift; sourceTree = "<group>"; };
+		904EB4CD6784228A3B6C7D9B /* MobileSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSync.swift; sourceTree = "<group>"; };
+		9933AFF1EA1D7CB05FCC2576 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		9BB24C6E440105462E1D9C89 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		BFEE356FDAA946F962666C6E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CB0264D2AD80027958B9F45D /* MobilePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobilePresentationTests.swift; sourceTree = "<group>"; };
+		CCD15A9E81384B3F1DAEEDBF /* MobileSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSnapshot.swift; sourceTree = "<group>"; };
+		ED1D88C5CB5270B666DE0FF3 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		F640CB382C0E319459810E0D /* Preferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preferences.swift; sourceTree = "<group>"; };
+		F6D1D09B6169D4D2ED95EF7D /* InformationBarMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = InformationBarMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FDA3AC351EBF2CB6783D64C6 /* InformationWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InformationWidgets.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		373D04A9FAD7023D47E25A4C /* Configuration */ = {
+			isa = PBXGroup;
+			children = (
+				ED1D88C5CB5270B666DE0FF3 /* PrivacyInfo.xcprivacy */,
+			);
+			path = Configuration;
+			sourceTree = "<group>";
+		};
+		451BFFCEFD302037D860B681 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				38BE10C0E6A769392E4DBA12 /* MobilePresentation.swift */,
+				CCD15A9E81384B3F1DAEEDBF /* MobileSnapshot.swift */,
+				904EB4CD6784228A3B6C7D9B /* MobileSync.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		6532EB1DD33ABEDD4A1A9EE9 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				9933AFF1EA1D7CB05FCC2576 /* DashboardView.swift */,
+				6BD4274F8FF1E9B8745CE1A6 /* InformationBarMobileApp.swift */,
+				8F192B68EF72AFC6F3962E59 /* MobileStore.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		6542BF75FD339F2EE3DD4B34 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F6D1D09B6169D4D2ED95EF7D /* InformationBarMobile.app */,
+				32BF1DC9B8053939AC78391E /* InformationBarMobileTests.xctest */,
+				1B50388064804C8A6BCFDAE3 /* InformationBarWidgets.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		67B573B3E4E7746506C416EF /* information-bar */ = {
+			isa = PBXGroup;
+			children = (
+				885EFA963CB843F5EAC82E51 /* Sources */,
+			);
+			name = "information-bar";
+			path = ..;
+			sourceTree = "<group>";
+		};
+		885EFA963CB843F5EAC82E51 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				C4525D4DD0B6F36450474C68 /* InformationBar */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		8BD4ECB204F824A9C89590B3 /* Widgets */ = {
+			isa = PBXGroup;
+			children = (
+				FDA3AC351EBF2CB6783D64C6 /* InformationWidgets.swift */,
+			);
+			path = Widgets;
+			sourceTree = "<group>";
+		};
+		C3FBD69EF3988DFD0958F53F = {
+			isa = PBXGroup;
+			children = (
+				BFEE356FDAA946F962666C6E /* Assets.xcassets */,
+				6532EB1DD33ABEDD4A1A9EE9 /* App */,
+				373D04A9FAD7023D47E25A4C /* Configuration */,
+				67B573B3E4E7746506C416EF /* information-bar */,
+				451BFFCEFD302037D860B681 /* Shared */,
+				D5E6F67308E3BDC92ABD98C8 /* Tests */,
+				8BD4ECB204F824A9C89590B3 /* Widgets */,
+				6542BF75FD339F2EE3DD4B34 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C4525D4DD0B6F36450474C68 /* InformationBar */ = {
+			isa = PBXGroup;
+			children = (
+				457E8EBFED5476FB4FCC94F3 /* DemoData.swift */,
+				8A10E22774B31D7E158AE2C0 /* EnergyModels.swift */,
+				5FFA4D9DD359AC469BBA56BB /* KrakenModels.swift */,
+				9BB24C6E440105462E1D9C89 /* Models.swift */,
+				F640CB382C0E319459810E0D /* Preferences.swift */,
+			);
+			path = InformationBar;
+			sourceTree = "<group>";
+		};
+		D5E6F67308E3BDC92ABD98C8 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				CB0264D2AD80027958B9F45D /* MobilePresentationTests.swift */,
+				2BC645D162A2F1805B9E31B7 /* MobileSnapshotTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A29CF9C44E2CFE17FAABD28C /* InformationBarWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2AF3F172E0308B0A68701DBD /* Build configuration list for PBXNativeTarget "InformationBarWidgets" */;
+			buildPhases = (
+				CCE556AD5CCAA5F72464D917 /* Sources */,
+				F9DB2C5B92816EC5F5FE33DE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = InformationBarWidgets;
+			packageProductDependencies = (
+			);
+			productName = InformationBarWidgets;
+			productReference = 1B50388064804C8A6BCFDAE3 /* InformationBarWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		AF412912BF732CBC496AA7FB /* InformationBarMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 08072A6223E99403678D7CB0 /* Build configuration list for PBXNativeTarget "InformationBarMobile" */;
+			buildPhases = (
+				84272089CB2D7E9FA3730E9A /* Sources */,
+				CD2DE77A2841F26F2AC27A90 /* Resources */,
+				E1F7E32902B2A4125E5CACA8 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FA83EA60A19A161769F126E9 /* PBXTargetDependency */,
+			);
+			name = InformationBarMobile;
+			packageProductDependencies = (
+			);
+			productName = InformationBarMobile;
+			productReference = F6D1D09B6169D4D2ED95EF7D /* InformationBarMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CB83D0F8584F331DA02245DB /* InformationBarMobileTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C5602053205A9554495F7A2B /* Build configuration list for PBXNativeTarget "InformationBarMobileTests" */;
+			buildPhases = (
+				72DCBE5B09E7A5E4CE334BEF /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5830B21163FEF242208AE090 /* PBXTargetDependency */,
+			);
+			name = InformationBarMobileTests;
+			packageProductDependencies = (
+			);
+			productName = InformationBarMobileTests;
+			productReference = 32BF1DC9B8053939AC78391E /* InformationBarMobileTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		50D6AE30C1491C02F9D0BEDD /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					A29CF9C44E2CFE17FAABD28C = {
+						DevelopmentTeam = K8MRZPASGA;
+						ProvisioningStyle = Automatic;
+					};
+					AF412912BF732CBC496AA7FB = {
+						DevelopmentTeam = K8MRZPASGA;
+						ProvisioningStyle = Automatic;
+					};
+					CB83D0F8584F331DA02245DB = {
+						DevelopmentTeam = K8MRZPASGA;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = FFF70B425BBC6A3F975DA256 /* Build configuration list for PBXProject "InformationBarMobile" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = C3FBD69EF3988DFD0958F53F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6542BF75FD339F2EE3DD4B34 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AF412912BF732CBC496AA7FB /* InformationBarMobile */,
+				A29CF9C44E2CFE17FAABD28C /* InformationBarWidgets */,
+				CB83D0F8584F331DA02245DB /* InformationBarMobileTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		CD2DE77A2841F26F2AC27A90 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6DEB48380A3CEBC4AE9A9109 /* Assets.xcassets in Resources */,
+				09334AA1199814F56F41EDA4 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F9DB2C5B92816EC5F5FE33DE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				671296E3C89659C0F9F8F635 /* Assets.xcassets in Resources */,
+				6524566B88B145FA2DE9B6D2 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		72DCBE5B09E7A5E4CE334BEF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EF37611FBBA8B3C28C86C8CE /* MobilePresentationTests.swift in Sources */,
+				7D531FB545632D34883C635A /* MobileSnapshotTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		84272089CB2D7E9FA3730E9A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				385A1AD2D2536ED81DC9B9F6 /* DashboardView.swift in Sources */,
+				862AB71E35D32066958F031F /* DemoData.swift in Sources */,
+				A4E4765102C000592FCC22FD /* EnergyModels.swift in Sources */,
+				8F903AA8393683B71BB8750A /* InformationBarMobileApp.swift in Sources */,
+				D422451634978E043D229E82 /* KrakenModels.swift in Sources */,
+				F0C4AE23F26A398214367643 /* MobilePresentation.swift in Sources */,
+				0C12AF9E0B3391FEBF87AE2D /* MobileSnapshot.swift in Sources */,
+				D5889B7E3BCF31EAD49D6BF3 /* MobileStore.swift in Sources */,
+				7B139C02EB55D5531E3E07C0 /* MobileSync.swift in Sources */,
+				A837B38FC52619BB3FB11C38 /* Models.swift in Sources */,
+				2A2180EB5A1D824590A8D0E9 /* Preferences.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CCE556AD5CCAA5F72464D917 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B6B0C2A8C5FC64E4D5E01689 /* DemoData.swift in Sources */,
+				0847FC81C2C18E28046E570D /* EnergyModels.swift in Sources */,
+				1D2E1C7C8AC1CAFC8C9DCE82 /* InformationWidgets.swift in Sources */,
+				044B472AEE230AC1D42CD2FE /* KrakenModels.swift in Sources */,
+				E6802D449E6E82C665400CF1 /* MobilePresentation.swift in Sources */,
+				4B90E3595C1FC46EC84FA2D1 /* MobileSnapshot.swift in Sources */,
+				8A7A437F5ADED6B8ED456DD4 /* MobileSync.swift in Sources */,
+				82154CE19686F48F609EDBB3 /* Models.swift in Sources */,
+				4315773BD7B5F61FBB910930 /* Preferences.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5830B21163FEF242208AE090 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AF412912BF732CBC496AA7FB /* InformationBarMobile */;
+			targetProxy = F25DCCD4C9AFC35AB0E3275F /* PBXContainerItemProxy */;
+		};
+		FA83EA60A19A161769F126E9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A29CF9C44E2CFE17FAABD28C /* InformationBarWidgets */;
+			targetProxy = 901FCFD774C20C09E23AD2A0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1D63C6924CC121520879A93C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.starecat.InformationBar.mobile.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/InformationBarMobile.app/InformationBarMobile";
+			};
+			name = Debug;
+		};
+		4A3D14D02400FA3179244091 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Configuration/Widget.entitlements;
+				INFOPLIST_FILE = "Configuration/Widget-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Information Bar";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.starecat.InformationBar.mobile.widgets;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		586D67DB22C60E52F79D2893 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Configuration/Widget.entitlements;
+				INFOPLIST_FILE = "Configuration/Widget-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Information Bar";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.starecat.InformationBar.mobile.widgets;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6F8BB12B77C2392448C399C4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Configuration/App.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = "Configuration/App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Information Bar";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.starecat.InformationBar.mobile;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		9C2B353C81987A4B1138A657 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APP_GROUP = group.dev.starecat.InformationBar.mobile;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = K8MRZPASGA;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				KEYCHAIN_GROUP = dev.starecat.InformationBar.mobile.shared;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AE4F34089146E7387D0C4214 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APP_GROUP = group.dev.starecat.InformationBar.mobile;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = K8MRZPASGA;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				KEYCHAIN_GROUP = dev.starecat.InformationBar.mobile.shared;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C7508DF4E637A52AE92C4B17 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Configuration/App.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = "Configuration/App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Information Bar";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.starecat.InformationBar.mobile;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C7E06926BC625613D46FCD05 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.starecat.InformationBar.mobile.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/InformationBarMobile.app/InformationBarMobile";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		08072A6223E99403678D7CB0 /* Build configuration list for PBXNativeTarget "InformationBarMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6F8BB12B77C2392448C399C4 /* Debug */,
+				C7508DF4E637A52AE92C4B17 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		2AF3F172E0308B0A68701DBD /* Build configuration list for PBXNativeTarget "InformationBarWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				586D67DB22C60E52F79D2893 /* Debug */,
+				4A3D14D02400FA3179244091 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C5602053205A9554495F7A2B /* Build configuration list for PBXNativeTarget "InformationBarMobileTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1D63C6924CC121520879A93C /* Debug */,
+				C7E06926BC625613D46FCD05 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FFF70B425BBC6A3F975DA256 /* Build configuration list for PBXProject "InformationBarMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9C2B353C81987A4B1138A657 /* Debug */,
+				AE4F34089146E7387D0C4214 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 50D6AE30C1491C02F9D0BEDD /* Project object */;
+}

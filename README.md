@@ -1,6 +1,6 @@
 # Information Bar
 
-Menu bar usage for ChatGPT, Claude and Cursor, Vast.ai rentals, Pearl mining, your Kraken portfolio and HomeWizard power. Native macOS; settings and normalized metrics stay on your Mac.
+Menu bar usage for ChatGPT, Claude and Cursor, Vast.ai rentals, Pearl mining, your Kraken portfolio and HomeWizard power. Native macOS, with an optional iPhone/iPad companion and widgets. Account credentials stay on your Mac.
 
 <p>
   <img src="docs/screenshots/claude-dropdown.png" width="320" alt="Claude dropdown">
@@ -35,7 +35,21 @@ bash scripts/install-app.sh   # builds, installs in /Applications and opens the 
 
 ## How it works
 
-A Python collector reads each provider's existing login, calls its usage endpoint and writes normalized metrics to a private cache. Tokens go only to their own provider; nothing else leaves your Mac. Endpoints, definitions and refresh rules: [docs/data-sources.md](docs/data-sources.md).
+A Python collector reads each provider's existing login, calls its usage endpoint and writes normalized metrics to a private cache. Tokens go only to their own provider. Readings stay on your Mac unless you enable the paired mobile companion. Endpoints, definitions and refresh rules: [docs/data-sources.md](docs/data-sources.md).
+
+## iPhone and widgets
+
+The native iOS 17+ companion includes a dashboard, full source details, configurable small/medium/large Home Screen widgets and Lock Screen widgets. Light and dark appearance follow the system. A paired HTTPS companion synchronizes your Mac's normalized readings on the same network; source timestamps and unavailable readings are preserved. Widgets refresh on iOS's schedule.
+
+Open `ios/InformationBarMobile.xcodeproj`, or use:
+
+```sh
+bash scripts/build-ios.sh simulator
+bash scripts/install-mobile-bridge.sh
+bash scripts/install-ios.sh --pair
+```
+
+Device installation requires an Apple Developer account in Xcode and a reachable, paired iPhone. The companion keeps collecting on the Mac; Kraken phone prices follow the Mac's periodic cache refresh. The phone shows Kraken spot balances; margin positions stay on the Mac. Setup, privacy, testing, and removing the companion: [iOS guide](docs/ios.md).
 
 ## Develop
 
