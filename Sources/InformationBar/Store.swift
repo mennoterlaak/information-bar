@@ -297,7 +297,10 @@ final class DashboardStore: ObservableObject {
     if id == "kraken" {
       let credentials = KrakenCredentials.load()
       krakenConnected = credentials != nil
-      return try JSONEncoder().encode(["kraken": credentials])
+      let margin = preferences.provider(.kraken).marginPositions
+      return try JSONEncoder().encode([
+        "kraken": credentials.map { KrakenConfiguration($0, margin: margin) }
+      ])
     }
     return nil
   }

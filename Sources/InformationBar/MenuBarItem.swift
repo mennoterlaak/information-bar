@@ -30,9 +30,18 @@ struct MenuBarItemView: View {
     case .earningsGraph:
       MenuBarsGlyph(values: provider.isFresh ? (provider.daily ?? []).map(\.amount) : [])
     default:
-      Text(provider.text(for: element, preferences: options, power: power) ?? "—")
+      let text = Text(provider.text(for: element, preferences: options, power: power) ?? "—")
         .font(.system(size: 11, weight: .medium)).monospacedDigit().lineLimit(1)
+      if let alert = alert(element) { text.foregroundStyle(alert) } else { text }
     }
+  }
+
+  /// A margin level close to Kraken's margin call stands out, as a ring does from 90%.
+  private func alert(_ element: MenuElement) -> Color? {
+    guard element.kind == .marginLevel, provider.isFresh,
+      let margin = provider.kraken?.openMargin
+    else { return nil }
+    return riskColor(margin.risk)
   }
 }
 

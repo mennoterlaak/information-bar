@@ -24,25 +24,29 @@ final class KrakenTests: XCTestCase {
 
   /// A EUR portfolio priced directly (BTC), through a bridge (TAO), inverted (USD), as cash
   /// (EUR) and not at all (USDT0). Total 7,540; change since the open 80.
-  private func routed(age: Double = 0) throws -> Provider {
+  private func routedPayload() -> [String: Any] {
+    [
+      "currency": "EUR", "totalValue": 7540, "changeValue": 80,
+      "assets": [
+        asset("BTC", 0.1, price: 70000, open: 69000, route: [("BTC/EUR", false)]),
+        asset("TAO", 2, price: 200, open: 210, route: [("TAO/USD", false), ("EUR/USD", true)]),
+        asset("USD", 100, price: 0.9, open: 0.9, fiat: true, route: [("EUR/USD", true)]),
+        asset("EUR", 50, price: 1, open: 1, fiat: true),
+        asset("USDT0", 5),
+      ],
+    ]
+  }
+
+  private func kraken(_ payload: [String: Any], age: Double = 0) throws -> Provider {
     let raw: [String: Any] = [
       "id": "kraken", "name": "Kraken", "status": "ok",
-      "updatedAt": Date().timeIntervalSince1970 - age,
-      "kraken": [
-        "currency": "EUR", "totalValue": 7540, "changeValue": 80,
-        "assets": [
-          asset("BTC", 0.1, price: 70000, open: 69000, route: [("BTC/EUR", false)]),
-          asset(
-            "TAO", 2, price: 200, open: 210, route: [("TAO/USD", false), ("EUR/USD", true)]),
-          asset("USD", 100, price: 0.9, open: 0.9, fiat: true, route: [("EUR/USD", true)]),
-          asset("EUR", 50, price: 1, open: 1, fiat: true),
-          asset("USDT0", 5),
-        ],
-      ],
+      "updatedAt": Date().timeIntervalSince1970 - age, "kraken": payload,
     ]
     return try JSONDecoder().decode(
       Provider.self, from: JSONSerialization.data(withJSONObject: raw))
   }
+
+  private func routed(age: Double = 0) throws -> Provider { try kraken(routedPayload(), age: age) }
 
   /// A collector payload: cash is the largest holding, so it must not become the default price.
   private func provider(
@@ -196,6 +200,184 @@ final class KrakenTests: XCTestCase {
     let decoded = try JSONDecoder().decode(
       ProviderPreferences.self, from: JSONEncoder().encode(options))
     XCTAssertTrue(decoded.livePrices)
+  }
+
+  private func position(
+    _ symbol: String, long: Bool, _ amount: Double, entry: Double, price: Double, open: Double,
+    leverage: Double, rate: Double, route: [(String, Bool)], rollover: Double
+  ) -> [String: Any] {
+    let parts = symbol.split(separator: "/").map(String.init)
+    let cost = amount * entry
+    return [
+      "symbol": symbol, "base": parts[0], "quote": parts[1], "side": long ? "long" : "short",
+      "amount": amount, "decimals": 5, "entryPrice": entry, "price": price, "openPrice": open,
+      "openValue": amount * open, "cost": cost, "margin": cost / leverage,
+      "net": (long ? 1 : -1) * amount * (price - entry), "rate": rate,
+      "route": route.map { ["symbol": $0.0, "invert": $0.1] }, "rolloverPerDay": rollover,
+      "terms": "0.0100% per 4 hours", "fills": 1,
+    ]
+  }
+
+  /// The routed portfolio (balances 7,540, change 80) with a 5× BTC/USD long worth 480 and a
+  /// 2× ETH/EUR short worth 200: 680 unrealized on 2,960 of used margin.
+  private func margined(_ margin: [String: Any]? = nil, age: Double = 0) throws -> Provider {
+    var payload = routedPayload()
+    payload["margin"] =
+      margin ?? [
+        "equity": 7680, "tradeBalance": 7000, "used": 2960, "unrealized": 680, "marginCall": 80,
+        "liquidation": 40,
+        "positions": [
+          position(
+            "BTC/USD", long: true, 0.1, entry: 60000, price: 66000, open: 65000, leverage: 5,
+            rate: 0.8, route: [("EUR/USD", true)], rollover: 2.88),
+          position(
+            "ETH/EUR", long: false, 2, entry: 2000, price: 1900, open: 1950, leverage: 2, rate: 1,
+            route: [], rollover: 4.56),
+        ],
+      ]
+    return try kraken(payload, age: age)
+  }
+
+  func testOpenPositionsAddTheirProfitAndTodaysMoveToTheAccount() throws {
+    let kraken = try XCTUnwrap(try margined().kraken)
+    let margin = try XCTUnwrap(kraken.openMargin)
+    XCTAssertEqual(kraken.totalValue, 7540)
+    XCTAssertEqual(kraken.accountValue ?? 0, 7540 + 680, accuracy: 1e-9)
+    // The long gained 100 dollars today, the short 100 euros: 80 + 100 on top of the balances' 80.
+    XCTAssertEqual(margin.changeToday, 180, accuracy: 1e-9)
+    XCTAssertEqual(kraken.accountChange ?? 0, 260, accuracy: 1e-9)
+    XCTAssertEqual(kraken.changeFraction ?? 0, 260.0 / 7960, accuracy: 1e-12)
+    XCTAssertEqual(margin.levelNow ?? 0, 7680.0 / 2960 * 100, accuracy: 1e-9)
+    XCTAssertEqual(margin.freeNow ?? 0, 4720, accuracy: 1e-9)
+    XCTAssertEqual(margin.cushionNow ?? 0, 7680 - 2960 * 0.4, accuracy: 1e-9)
+    XCTAssertEqual(margin.rolloverPerDay ?? 0, 7.44, accuracy: 1e-9)
+    let long = try XCTUnwrap(margin.positions?.first)
+    XCTAssertEqual(long.leverage, 5)
+    XCTAssertEqual(long.pnl ?? 0, 480, accuracy: 1e-9)
+    XCTAssertEqual(long.marketChange ?? 0, 66000.0 / 65000 - 1, accuracy: 1e-12)
+    XCTAssertEqual(margin.positions?.last?.pnl, 200)
+  }
+
+  func testLivePricesMoveThePositionsEquityAndMarginLevel() throws {
+    let live = try margined().repriced([
+      "BTC/EUR": 80000, "TAO/USD": 250, "EUR/USD": 1.25, "BTC/USD": 70000, "ETH/EUR": 1800,
+    ])
+    let kraken = try XCTUnwrap(live.kraken)
+    let margin = try XCTUnwrap(kraken.openMargin)
+    // The long is up 400 more dollars at 0.8, the short 200 more euros.
+    XCTAssertEqual(margin.unrealizedNow ?? 0, 680 + 320 + 200, accuracy: 1e-9)
+    XCTAssertEqual(margin.equityNow ?? 0, 7680 + 520, accuracy: 1e-9)
+    XCTAssertEqual(margin.levelNow ?? 0, 8200.0 / 2960 * 100, accuracy: 1e-9)
+    XCTAssertEqual(margin.changeToday, 400 + 300, accuracy: 1e-9)
+    XCTAssertEqual(kraken.accountValue ?? 0, 8530 + 1200, accuracy: 1e-9)
+    XCTAssertEqual(kraken.accountChange ?? 0, 1070 + 700, accuracy: 1e-9)
+    XCTAssertEqual(
+      kraken.liveSymbols, ["BTC/EUR", "TAO/USD", "EUR/USD", "BTC/USD", "ETH/EUR"])
+    // A position without a live price keeps its refresh-time P&L.
+    let partial = try XCTUnwrap(try margined().repriced(["ETH/EUR": 1800]).kraken?.openMargin)
+    XCTAssertEqual(partial.positions?.first?.pnl ?? 0, 480, accuracy: 1e-9)
+    XCTAssertEqual(partial.unrealizedNow ?? 0, 880, accuracy: 1e-9)
+  }
+
+  func testMarginMenuBarValues() throws {
+    let options = ProviderPreferences.defaults(for: .kraken)
+    let item = try margined()
+    XCTAssertEqual(item.text(for: MenuElement(.portfolioValue), preferences: options), "€8,220")
+    XCTAssertEqual(item.text(for: MenuElement(.portfolioChange), preferences: options), "+3.3%")
+    XCTAssertEqual(item.text(for: MenuElement(.marginPnL), preferences: options), "+€680.00")
+    XCTAssertEqual(item.text(for: MenuElement(.marginLevel), preferences: options), "259%")
+    XCTAssertEqual(
+      try margined(age: 3600).text(for: MenuElement(.marginPnL), preferences: options), "—")
+
+    // No open positions: nothing to add, and no margin level to speak of.
+    let flat = try margined(["positions": []])
+    XCTAssertEqual(flat.text(for: MenuElement(.portfolioValue), preferences: options), "€7,540")
+    XCTAssertEqual(flat.text(for: MenuElement(.marginPnL), preferences: options), "€0.00")
+    XCTAssertEqual(flat.text(for: MenuElement(.marginLevel), preferences: options), "—")
+    // A key that cannot read positions leaves the P&L unknown rather than zero.
+    let denied = try margined(["error": "Margin positions need another permission."])
+    XCTAssertEqual(denied.text(for: MenuElement(.portfolioValue), preferences: options), "€7,540")
+    XCTAssertEqual(denied.text(for: MenuElement(.marginPnL), preferences: options), "—")
+    XCTAssertEqual(try provider().text(for: MenuElement(.marginPnL), preferences: options), "—")
+    XCTAssertTrue(MenuElementKind.available(for: .kraken).contains(.marginLevel))
+    XCTAssertFalse(MenuElementKind.available(for: .pearl).contains(.marginPnL))
+  }
+
+  func testMarginRiskFollowsKrakensLevels() throws {
+    func risk(equity: Double, call: Double? = 80) throws -> KrakenMargin.Risk? {
+      var margin: [String: Any] = [
+        "equity": equity, "used": 1000, "unrealized": 0, "liquidation": 40,
+        "positions": [
+          position(
+            "ETH/EUR", long: true, 1, entry: 2000, price: 2000, open: 2000, leverage: 2, rate: 1,
+            route: [], rollover: 1)
+        ],
+      ]
+      if let call { margin["marginCall"] = call }
+      return try margined(margin).kraken?.openMargin?.risk
+    }
+    XCTAssertEqual(try risk(equity: 5750), .normal)
+    XCTAssertEqual(try risk(equity: 1000), .normal)
+    // Below 100% nothing is left to open positions with; at the call level Kraken may close them.
+    XCTAssertEqual(try risk(equity: 990), .noFreeMargin)
+    XCTAssertEqual(try risk(equity: 800), .marginCall)
+    XCTAssertEqual(try risk(equity: 500, call: nil), .noFreeMargin)
+  }
+
+  func testPositionsWithoutKrakensAccountFiguresStillAddUp() throws {
+    let only = try margined([
+      "positions": [
+        position(
+          "ETH/EUR", long: false, 2, entry: 2000, price: 1900, open: 1950, leverage: 2, rate: 1,
+          route: [], rollover: 4.56)
+      ]
+    ])
+    let kraken = try XCTUnwrap(only.kraken)
+    XCTAssertEqual(kraken.openMargin?.unrealizedNow, 200)
+    XCTAssertEqual(kraken.accountValue, 7740)
+    XCTAssertNil(kraken.openMargin?.levelNow)
+    XCTAssertEqual(
+      only.text(for: MenuElement(.marginLevel), preferences: .defaults(for: .kraken)), "—")
+  }
+
+  func testQuoteCurrencyAmountsAndLeverageAreFormattedForReading() {
+    XCTAssertEqual(formatQuotePrice(66000, quote: "USD"), "$66,000.00")
+    XCTAssertEqual(formatQuotePrice(66000, quote: "USD", compact: true), "$66,000")
+    XCTAssertEqual(formatQuotePrice(2239.99, quote: "EUR"), "€2,239.99")
+    XCTAssertEqual(formatQuotePrice(0.055, quote: "BTC"), "0.05500 BTC")
+    XCTAssertEqual(formatQuotePrice(nil, quote: "BTC"), "—")
+    XCTAssertEqual(formatQuoteMove(from: 79000, to: 82938.2, quote: "USD"), "$79,000 → $82,938")
+    XCTAssertEqual(formatQuoteMove(from: 0.055, to: 0.05, quote: "BTC"), "0.05500 → 0.05000 BTC")
+    XCTAssertEqual(formatQuoteAmount(0.01, quote: "BTC", signed: true), "+0.01 BTC")
+    XCTAssertEqual(formatQuoteAmount(-12.5, quote: "USD", signed: true), "-$12.50")
+    XCTAssertEqual(formatQuoteAmount(7700, quote: "USD"), "$7,700.00")
+    XCTAssertEqual(formatSigned(43.234, money: euro), "+€43.23")
+    XCTAssertEqual(formatSigned(-1240.5, money: euro), "-€1,240.50")
+    XCTAssertEqual(formatSigned(-0.001, money: euro), "€0.00")
+    XCTAssertEqual(formatLeverage(5), "5×")
+    XCTAssertEqual(formatLeverage(2.5), "2.5×")
+    XCTAssertEqual(formatLeverage(4.99996), "5×")
+    XCTAssertEqual(formatMarginLevel(12345.6), "12,346%")
+  }
+
+  func testMarginPositionsAreReadByDefaultAndTheChoiceReachesTheCollector() throws {
+    let older = try JSONDecoder().decode(
+      ProviderPreferences.self, from: Data(#"{"enabled":true,"currency":"EUR"}"#.utf8))
+    XCTAssertTrue(older.marginPositions)
+    var options = ProviderPreferences.defaults(for: .kraken)
+    options.marginPositions = false
+    let decoded = try JSONDecoder().decode(
+      ProviderPreferences.self, from: JSONEncoder().encode(options))
+    XCTAssertFalse(decoded.marginPositions)
+
+    let credentials = KrakenCredentials(apiKey: "key", privateKey: "secret")
+    let payload = try JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(["kraken": KrakenConfiguration(credentials, margin: false)]))
+    XCTAssertEqual(
+      (payload as? [String: [String: Any]])?["kraken"]?["margin"] as? Bool, false)
+    let missing: [String: KrakenConfiguration?] = ["kraken": nil]
+    XCTAssertEqual(
+      String(decoding: try JSONEncoder().encode(missing), as: UTF8.self), #"{"kraken":null}"#)
   }
 
   func testHashratePairsShareTheirUnit() {

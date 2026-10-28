@@ -30,7 +30,8 @@ ASSETS = {
 
 def pair(base, quote, status="online"):
     names = {key: info["altname"] for key, info in ASSETS.items()}
-    return {"wsname": names[base] + "/" + names[quote], "base": base, "quote": quote, "status": status}
+    return {"wsname": names[base] + "/" + names[quote], "base": base, "quote": quote, "status": status,
+            "margin_call": 80, "margin_stop": 40}
 
 
 PAIRS = {
@@ -55,6 +56,31 @@ BALANCE = {
     "ZEUR": "100.0000", "EUR.HOLD": "50.0000", "ZUSD": "110.0000", "DOT28.S": "10", "USDT0": "5",
     "KFEE": "1000.00", "ADA": "0.00000000",
 }
+# Margin positions are read at a fixed time: 2027-01-15 08:00 UTC.
+NOW = 1_800_000_000.0
+MIDNIGHT = NOW // 86400 * 86400
+
+
+def position(pair, side, opened, cost, vol, margin, value, net, closed="0.00000000", terms="0.0100% per 4 hours", fee="1.0"):
+    return {"ordertxid": "OQCLML-BW3P3-BUCMWZ", "posstatus": "open", "pair": pair, "time": opened, "type": side,
+            "ordertype": "limit", "cost": cost, "fee": fee, "vol": vol, "vol_closed": closed, "margin": margin,
+            "value": value, "net": net, "terms": terms, "rollovertm": str(int(NOW + 3600)), "misc": "", "oflags": ""}
+
+
+POSITIONS = {
+    # One long filled twice, before and after midnight, priced through BTC/USD in a EUR portfolio.
+    "TF5GVO-T7ZZ2-6NBKBI": position("XXBTZUSD", "buy", MIDNIGHT - 3600, "5000.00000", "0.10000000", "1000.00000",
+                                    "5500.0", "+500.0000", fee="13.00000"),
+    "T24DOR-TAFLM-ID3NYP": position("XXBTZUSD", "buy", MIDNIGHT + 3600, "2700.00000", "0.05000000", "540.00000",
+                                    "2750.0", "+50.0000", fee="7.00000"),
+    # A short with half its volume closed, quoted in BTC.
+    "TYMRFG-URRG5-2ZTQSD": position("XETHXXBT", "sell", MIDNIGHT - 86400, "0.22000000", "4.00000000", "0.05500000",
+                                    "0.1", "+0.0100", closed="2.00000000", terms="0.0200% per 4 hours", fee="0.00050000"),
+    "TAFGBN-TZNFC-7CCYIM": {**position("XXBTZUSD", "sell", MIDNIGHT, "100.0", "0.002", "20.0", "110.0", "-10.0"),
+                            "posstatus": "closed"},
+}
+TRADE = {"eb": "16000.0000", "tb": "15000.0000", "m": "2000.0000", "n": "1000.0000", "c": "12000.0000",
+         "v": "13000.0000", "e": "16000.0000", "mf": "14000.0000", "ml": "800.00"}
 
 
 def ok(result):
@@ -62,9 +88,10 @@ def ok(result):
 
 
 def kraken(overrides=None):
-    """A fake request_json serving Kraken paths, recording each call."""
+    """A fake request_json serving Kraken paths, recording each call. No margin positions by default."""
     responses = {"/0/public/Assets": ok(ASSETS), "/0/public/AssetPairs": ok(PAIRS),
-                 "/0/public/Ticker": ok(TICKER), "/0/private/Balance": ok(BALANCE), **(overrides or {})}
+                 "/0/public/Ticker": ok(TICKER), "/0/private/Balance": ok(BALANCE),
+                 "/0/private/OpenPositions": ok({}), "/0/private/TradeBalance": ok(TRADE), **(overrides or {})}
     calls = []
 
     def request(url, token=None, **kwargs):
@@ -76,7 +103,8 @@ def kraken(overrides=None):
 
 def markets():
     return {"assets": {key: {"altname": info["altname"], "decimals": info["display_decimals"]} for key, info in ASSETS.items()},
-            "pairs": [[key, info["base"], info["quote"], info["wsname"]] for key, info in PAIRS.items() if info["status"] == "online"]}
+            "pairs": [[key, info["base"], info["quote"], info["wsname"]] for key, info in PAIRS.items() if info["status"] == "online"],
+            "lookup": {key: [info["base"], info["quote"], info["wsname"], 80, 40] for key, info in PAIRS.items()}}
 
 
 class KrakenTests(unittest.TestCase):
@@ -242,6 +270,130 @@ class KrakenTests(unittest.TestCase):
         request, _ = kraken()
         with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request):
             self.assertEqual(c.validate_kraken_key(CREDENTIALS, Path(root)), {"valid": True})
+
+    def test_open_positions_are_grouped_per_market_and_valued_in_the_portfolio_currency(self):
+        request, calls = kraken({"/0/private/OpenPositions": ok(POSITIONS)})
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request), \
+                patch.object(c.time, "time", return_value=NOW):
+            result = c.fetch_kraken(CREDENTIALS, Path(root), "EUR")
+        self.assertNotIn("status", result)
+        margin = result["kraken"]["margin"]
+        # Kraken's own account figures, asked for in the portfolio currency.
+        self.assertEqual({key: margin[key] for key in ("equity", "tradeBalance", "used", "unrealized")},
+                         {"equity": 16000, "tradeBalance": 15000, "used": 2000, "unrealized": 1000})
+        self.assertEqual((margin["marginCall"], margin["liquidation"]), (80, 40))
+        # Balances are unchanged by positions; the app adds their P&L to the total.
+        self.assertAlmostEqual(result["kraken"]["totalValue"], 7500 + 5000 + 2000 + 150 + 100)
+        btc, eth = margin["positions"]  # Largest first; the closed entry is left out.
+        self.assertEqual((btc["symbol"], btc["base"], btc["quote"], btc["side"], btc["fills"]), ("BTC/USD", "BTC", "USD", "long", 2))
+        self.assertAlmostEqual(btc["amount"], 0.15)
+        self.assertAlmostEqual(btc["cost"], 7700)
+        self.assertAlmostEqual(btc["entryPrice"], 7700 / 0.15)
+        self.assertAlmostEqual(btc["margin"], 1540)
+        self.assertAlmostEqual(btc["net"], 550)
+        self.assertAlmostEqual(btc["fee"], 20)
+        self.assertEqual((btc["price"], btc["openPrice"]), (55000, 54000))
+        # The fill from before midnight counts from today's open, the later one from its entry.
+        self.assertAlmostEqual(btc["openValue"], 0.1 * 54000 + 0.05 * 54000)
+        self.assertAlmostEqual(btc["rate"], 1 / 1.1)
+        self.assertEqual(btc["route"], [{"symbol": "EUR/USD", "invert": True}])
+        # 0.01% every 4 hours of the 7,700 USD lent for a long, in euros.
+        self.assertAlmostEqual(btc["rolloverPerDay"], 7700 * 0.0001 * 6 / 1.1)
+        self.assertEqual((btc["terms"], btc["opened"], btc["nextRollover"]), ("0.0100% per 4 hours", MIDNIGHT - 3600, NOW + 3600))
+        self.assertEqual((eth["symbol"], eth["base"], eth["quote"], eth["side"]), ("ETH/BTC", "ETH", "BTC", "short"))
+        self.assertAlmostEqual(eth["amount"], 2)
+        # Only the open half counts toward cost and margin.
+        self.assertAlmostEqual(eth["cost"], 0.11)
+        self.assertAlmostEqual(eth["margin"], 0.0275)
+        self.assertAlmostEqual(eth["entryPrice"], 0.055)
+        self.assertAlmostEqual(eth["net"], 0.01)
+        self.assertEqual((eth["rate"], eth["route"]), (50000, [{"symbol": "BTC/EUR", "invert": False}]))
+        # A short borrows the base amount: 0.02% every 4 hours of 2 ETH at 0.05 BTC, in euros.
+        self.assertAlmostEqual(eth["rolloverPerDay"], 2 * 0.05 * 0.0002 * 6 * 50000)
+
+        paths = [urllib.parse.urlparse(url).path for url, _ in calls]
+        self.assertEqual(paths.count("/0/private/OpenPositions"), 1)
+        for method, field in (("OpenPositions", "docalcs=true"), ("TradeBalance", "asset=ZEUR")):
+            kwargs = next(kwargs for url, kwargs in calls if url.endswith("/0/private/" + method))
+            nonce = int(urllib.parse.parse_qs(kwargs["form"])["nonce"][0])
+            self.assertIn(field, kwargs["form"])
+            self.assertEqual(kwargs["headers"]["API-Sign"],
+                             c.kraken_signature("/0/private/" + method, kwargs["form"], nonce, base64.b64decode(SECRET)))
+        ticker = next(url for url, _ in calls if "/0/public/Ticker" in url)
+        self.assertIn("pair=TAOUSD,XETHXXBT,XXBTZEUR,XXBTZUSD,ZEURZUSD", ticker)
+
+    def test_without_open_positions_the_account_figures_are_not_requested(self):
+        request, calls = kraken()
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request):
+            result = c.fetch_kraken(CREDENTIALS, Path(root), "EUR")
+        self.assertEqual(result["kraken"]["margin"], {"positions": []})
+        self.assertFalse(any("TradeBalance" in url for url, _ in calls))
+
+    def test_a_key_for_balances_only_explains_the_missing_permission_without_failing(self):
+        request, calls = kraken({"/0/private/OpenPositions": {"error": ["EGeneral:Permission denied"], "result": {}}})
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request):
+            result = c.fetch_kraken(CREDENTIALS, Path(root), "EUR")
+        self.assertNotIn("status", result)
+        self.assertEqual(result["kraken"]["margin"], {"error": c.KRAKEN_MARGIN_PERMISSION})
+        self.assertIn("Query Open Orders & Trades", c.KRAKEN_MARGIN_PERMISSION)
+        self.assertIsNotNone(result["kraken"]["totalValue"])
+        self.assertFalse(any("TradeBalance" in url for url, _ in calls))
+
+    def test_margin_can_be_turned_off(self):
+        request, calls = kraken({"/0/private/OpenPositions": ok(POSITIONS)})
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request):
+            result = c.fetch_kraken({**CREDENTIALS, "margin": False}, Path(root), "EUR")
+        self.assertNotIn("margin", result["kraken"])
+        self.assertEqual([urllib.parse.urlparse(url).path for url, _ in calls if "/private/" in url], ["/0/private/Balance"])
+
+    def test_margin_outages_keep_the_balances_and_say_what_is_missing(self):
+        request, _ = kraken({"/0/private/OpenPositions": {"error": ["EService:Unavailable"], "result": {}}})
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request):
+            result = c.fetch_kraken(CREDENTIALS, Path(root), "EUR")
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(result["error"].startswith("Margin: Kraken is unavailable"))
+        self.assertNotIn("margin", result["kraken"])
+        self.assertAlmostEqual(result["kraken"]["totalValue"], 7500 + 5000 + 2000 + 150 + 100)
+
+        request, _ = kraken({"/0/private/OpenPositions": ok(POSITIONS),
+                             "/0/private/TradeBalance": {"error": ["EAPI:Rate limit exceeded"], "result": {}}})
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request):
+            result = c.fetch_kraken(CREDENTIALS, Path(root), "EUR")
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("rate limiting", result["error"])
+        # The positions themselves are still listed, without Kraken's account figures.
+        self.assertEqual(len(result["kraken"]["margin"]["positions"]), 2)
+        self.assertNotIn("equity", result["kraken"]["margin"])
+
+    def test_positions_without_prices_keep_krakens_valuation(self):
+        request, _ = kraken({"/0/private/OpenPositions": ok(POSITIONS),
+                             "/0/public/Ticker": {"error": ["EService:Unavailable"], "result": {}}})
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request), \
+                patch.object(c.time, "time", return_value=NOW):
+            result = c.fetch_kraken(CREDENTIALS, Path(root), "EUR")
+        self.assertTrue(result["error"].startswith("Prices: "))
+        positions = {row["symbol"]: row for row in result["kraken"]["margin"]["positions"]}
+        self.assertAlmostEqual(positions["BTC/USD"]["price"], (5500 + 2750) / 0.15)
+        self.assertAlmostEqual(positions["BTC/USD"]["net"], 550)
+        self.assertIsNone(positions["BTC/USD"]["rate"])
+        self.assertIsNone(positions["BTC/USD"]["openValue"])
+        self.assertEqual(result["kraken"]["margin"]["equity"], 16000)
+
+    def test_an_older_market_list_is_refreshed_to_name_positions(self):
+        request, calls = kraken({"/0/private/OpenPositions": ok(POSITIONS)})
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=request), \
+                patch.object(c.time, "time", return_value=NOW):
+            older = {key: value for key, value in markets().items() if key != "lookup"}
+            c.private_write(Path(root) / "kraken-markets.json", {**older, "checkedAt": NOW - 60})
+            result = c.fetch_kraken(CREDENTIALS, Path(root), "EUR")
+        self.assertEqual(sum("/0/public/AssetPairs" in url for url, _ in calls), 1)
+        self.assertEqual([row["symbol"] for row in result["kraken"]["margin"]["positions"]], ["BTC/USD", "ETH/BTC"])
+
+    def test_rollover_terms_are_read_as_a_daily_rate(self):
+        self.assertAlmostEqual(c.kraken_rollover("0.0100% per 4 hours"), 0.0006)
+        self.assertAlmostEqual(c.kraken_rollover("0.02 % per 24 hours"), 0.0002)
+        for terms in (None, "", "n/a", "0.01% per 0 hours", {"rate": 1}):
+            self.assertIsNone(c.kraken_rollover(terms))
 
     def test_new_credentials_or_currency_never_reuse_the_cached_portfolio(self):
         with tempfile.TemporaryDirectory() as root, \

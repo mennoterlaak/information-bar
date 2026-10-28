@@ -15,6 +15,11 @@ struct KrakenSettingsSections: View {
       get: { store.preferences.provider(.kraken).livePrices },
       set: { value in store.update(.kraken) { $0.livePrices = value } })
   }
+  private var marginPositions: Binding<Bool> {
+    Binding(
+      get: { store.preferences.provider(.kraken).marginPositions },
+      set: { value in store.update(.kraken) { $0.marginPositions = value } })
+  }
 
   var body: some View {
     Section {
@@ -26,11 +31,15 @@ struct KrakenSettingsSections: View {
         Text("Live prices")
         Text(liveStatus)
       }
+      Toggle(isOn: marginPositions) {
+        Text("Margin positions")
+        Text(marginStatus)
+      }
     } header: {
       sectionHeader(
         "Portfolio",
         info:
-          "Each asset is valued at the last trade on its Kraken market in this currency. Assets without one are converted through their USD, EUR, BTC, ETH, USDT or USDC market. Staked and Earn balances count toward their asset; fee credits are left out. Live prices follow every trade on those markets through Kraken's public feed, without your keys, while the Mac and its display are awake. The menu bar redraws at most once a second; balances still refresh every minute."
+          "Each asset is valued at the last trade on its Kraken market in this currency. Assets without one are converted through their USD, EUR, BTC, ETH, USDT or USDC market. Staked and Earn balances count toward their asset; fee credits are left out. Open margin positions add their unrealized profit or loss to the total and today's change; the dropdown lists them with equity, used margin and margin level. Live prices follow every trade on those markets through Kraken's public feed, without your keys, while the Mac and its display are awake. The menu bar redraws at most once a second; balances still refresh every minute."
       )
     }
     Section {
@@ -43,7 +52,7 @@ struct KrakenSettingsSections: View {
       SecureField(store.krakenConnected ? "Replace API key" : "API key", text: $apiKey)
       SecureField("Private key", text: $privateKey).onSubmit(save)
       Text(
-        "Create a separate key with only the Query Funds permission. Information Bar reads balances and cannot trade or withdraw with it."
+        "Create a separate key with the Query Funds permission, and Query Open Orders & Trades for margin positions. Information Bar only reads with it and cannot trade or withdraw."
       )
       .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       HStack {
@@ -95,6 +104,22 @@ struct KrakenSettingsSections: View {
         + next.formatted(date: .omitted, time: .standard) + "."
     case .paused: return "Paused while the display is asleep."
     }
+  }
+
+  private var marginStatus: String {
+    guard store.preferences.provider(.kraken).marginPositions else {
+      return "Only spot balances are read."
+    }
+    guard provider.isFresh, let kraken = provider.kraken else {
+      return "Read with the balances. Needs the Query Open Orders & Trades permission."
+    }
+    guard let margin = kraken.margin else { return "Not available right now." }
+    if let error = margin.error { return error }
+    guard let open = kraken.openMargin, let count = open.positions?.count else {
+      return "No open positions."
+    }
+    return "\(count) open " + (count == 1 ? "position" : "positions")
+      + (open.levelNow.map { " · margin level " + formatMarginLevel($0) } ?? "") + "."
   }
 
   private func save() {
