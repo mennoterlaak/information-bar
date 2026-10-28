@@ -206,7 +206,7 @@ struct InformationWidgetView: View {
   private func circularText(_ summary: MobileSummary) -> (value: String, unit: String) {
     switch summary.category {
     case .kraken:
-      guard let kraken = summary.provider?.kraken, let total = kraken.totalValue else { return ("—", "Portfolio") }
+      guard let kraken = summary.provider?.kraken, let total = kraken.accountValue else { return ("—", "Portfolio") }
       if abs(total) >= 1_000_000 { return (kraken.money.local(total / 1_000_000, digits: 1) + "m", "Portfolio") }
       if abs(total) >= 1000 { return (kraken.money.local(total / 1000, digits: 1) + "k", "Portfolio") }
       return (kraken.money.local(total, digits: 0), "Portfolio")

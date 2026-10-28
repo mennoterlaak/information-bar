@@ -45,7 +45,7 @@ struct MobileSummary {
     switch category {
     case .codex, .claude, .cursor: return selectedWindow?.percent ?? "—"
     case .kraken:
-      return provider?.kraken.map { $0.money.local($0.totalValue) } ?? "—"
+      return provider?.kraken.map { $0.money.local($0.accountValue) } ?? "—"
     case .pearl: return formatHashrate(provider?.pearl?.hashrate)
     case .power: return displayWatts.map { String(format: "%.0f W", $0) } ?? "—"
     case .vast: return money.local(vastShown.today)

@@ -165,6 +165,8 @@ struct MenuValueRow: View {
   let value: String
   /// Secondary figure drawn just before the value, such as a converted amount.
   var detail: String? = nil
+  /// Colour for the value, such as green for a gain.
+  var tint: Color = .primary
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 6) {
       Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
@@ -172,7 +174,7 @@ struct MenuValueRow: View {
       if let detail {
         Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
       }
-      Text(value).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+      Text(value).font(.system(size: 13, weight: .semibold)).monospacedDigit().foregroundStyle(tint)
     }
     .lineLimit(1)
     .padding(.horizontal, MenuMetrics.inset).padding(.vertical, 3)
@@ -262,6 +264,7 @@ struct ProviderPanel: View {
         Spacer()
         if let headline {
           Text(headline).font(.system(size: 15, weight: .semibold)).monospacedDigit()
+            .help(headlineHelp)
         } else if let plan = provider.plan {
           Text(plan).font(.system(size: 13)).foregroundStyle(.secondary)
         }
@@ -276,7 +279,11 @@ struct ProviderPanel: View {
             Spacer()
             Text(change.text).font(.system(size: 13)).monospacedDigit()
               .foregroundStyle(changeColor(change.fraction))
-              .help("Since Kraken's 00:00 UTC open, for the amounts held now.")
+              .help(
+                provider.kraken?.openMargin == nil
+                  ? "Since Kraken's 00:00 UTC open, for the amounts held now."
+                  : "Since Kraken's 00:00 UTC open, for the amounts held now and the open margin positions."
+              )
           }
         }
       }
@@ -304,9 +311,18 @@ struct ProviderPanel: View {
       return provider.isFresh ? formatHashrate(provider.pearl?.hashrate) : "—"
     case .kraken:
       guard let kraken = provider.kraken else { return nil }
-      return provider.isFresh ? kraken.totalValue.map { kraken.money.local($0) } ?? "—" : "—"
+      return provider.isFresh ? kraken.accountValue.map { kraken.money.local($0) } ?? "—" : "—"
     case .codex, .claude, .cursor, .power: return nil
     }
+  }
+
+  /// How the Kraken total adds up once margin positions are open.
+  private var headlineHelp: String {
+    guard category == .kraken, let kraken = provider.kraken, let margin = kraken.openMargin,
+      let balances = kraken.totalValue, let pnl = margin.unrealizedNow
+    else { return "" }
+    return "Balances " + kraken.money.local(balances) + " and unrealized P&L "
+      + formatSigned(pnl, money: kraken.money) + " of open margin positions."
   }
 
   private var subtitle: String? {
@@ -318,7 +334,9 @@ struct ProviderPanel: View {
       else { return provider.pearl == nil ? nil : "Kryptex pool" }
       let window = provider.pearl?.effectiveAverageWindow.rawValue ?? "7d"
       return "Kryptex · \(window) avg · \(online)/\(count) " + (count == 1 ? "worker" : "workers") + " online"
-    case .kraken: return provider.kraken == nil ? nil : "Spot portfolio"
+    case .kraken:
+      guard let kraken = provider.kraken else { return nil }
+      return kraken.openMargin == nil ? "Spot portfolio" : "Spot and margin"
     case .codex, .claude, .cursor, .power: return nil
     }
   }
@@ -326,10 +344,10 @@ struct ProviderPanel: View {
   /// Today's portfolio change, shown under the total.
   private var krakenChange: (text: String, fraction: Double)? {
     guard category == .kraken, provider.isFresh, let kraken = provider.kraken,
-      let change = kraken.changeValue, let fraction = kraken.changeFraction
+      let change = kraken.accountChange, let fraction = kraken.changeFraction
     else { return nil }
-    let amount = (change < 0 ? "-" : "+") + kraken.money.local(abs(change))
-    return (amount + " · " + formatChange(fraction) + " today", fraction)
+    let text = formatSigned(change, money: kraken.money) + " · " + formatChange(fraction) + " today"
+    return (text, fraction)
   }
 
   private var rentedHeadline: String {

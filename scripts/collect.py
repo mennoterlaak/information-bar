@@ -1099,6 +1099,8 @@ KRAKEN_ERRORS = {
     "EAPI:Rate limit exceeded": ("Kraken is rate limiting requests. Refresh will retry later.", 300, False),
     "EQuery:Unknown asset pair": ("Kraken no longer lists one of the price markets.", 300, False),
 }
+# OpenPositions and TradeBalance need more than the Query Funds permission that Balance needs.
+KRAKEN_MARGIN_PERMISSION = "Margin positions need the Query Open Orders & Trades permission on this API key."
 
 
 class KrakenError(SourceError):
@@ -1173,11 +1175,11 @@ def kraken_nonce(root):
     return nonce
 
 
-def kraken_private(method, config, root):
+def kraken_private(method, config, root, params=None):
     key, secret = kraken_credentials(config)
     path = "/0/private/" + method
     nonce = kraken_nonce(root)
-    postdata = urllib.parse.urlencode({"nonce": nonce})
+    postdata = urllib.parse.urlencode({"nonce": nonce, **(params or {})})
     return kraken_request(path, form=postdata, headers={"API-Key": key, "API-Sign": kraken_signature(path, postdata, nonce, secret)})
 
 
@@ -1195,12 +1197,18 @@ def kraken_markets(root, refresh=False):
         return cached
     try:
         assets, pairs = kraken_request("/0/public/Assets"), kraken_request("/0/public/AssetPairs")
+        listed = {key: info for key, info in pairs.items()
+                  if isinstance(info, dict) and isinstance(info.get("base"), str) and isinstance(info.get("quote"), str)}
         result = {
             "assets": {key: {"altname": info["altname"], "decimals": int(info.get("display_decimals", 8))}
                        for key, info in assets.items() if isinstance(info, dict) and isinstance(info.get("altname"), str)},
-            "pairs": [[key, info["base"], info["quote"], str(info.get("wsname") or key)] for key, info in pairs.items()
-                      if isinstance(info, dict) and info.get("status") == "online"
-                      and isinstance(info.get("base"), str) and isinstance(info.get("quote"), str)],
+            "pairs": [[key, info["base"], info["quote"], str(info.get("wsname") or key)]
+                      for key, info in listed.items() if info.get("status") == "online"],
+            # Every pair whatever its status, by REST name: a margin position can stay open on a
+            # market that no longer trades. Margin call and liquidation are margin levels in percent.
+            "lookup": {key: [info["base"], info["quote"], str(info.get("wsname") or key),
+                             number(info.get("margin_call")), number(info.get("margin_stop"))]
+                       for key, info in listed.items()},
             "checkedAt": time.time(),
         }
     except (SourceError, TypeError, ValueError) as exc:
@@ -1271,16 +1279,24 @@ def kraken_routes(holdings, markets, quote):
     return routes
 
 
-def kraken_priced(balances, root, quote):
-    """Holdings, their routes and one batched ticker. A delisted pair fails the whole ticker
-    request, so the market list is refetched once."""
+def kraken_priced(balances, positions, root, quote):
+    """Markets, holdings, routes and one batched ticker for the holdings, the markets of open
+    positions and the currencies those are quoted in. A delisted pair fails the whole ticker
+    request, and a position can be on a market newer than the list, so the list is refetched once."""
+    traded = {position["pair"] for position in positions.values() if isinstance(position.get("pair"), str)}
     for refresh in (False, True):
         markets = kraken_markets(root, refresh)
+        lookup = markets.get("lookup") or {}
+        outdated = "lookup" not in markets or time.time() - (number(markets.get("checkedAt")) or 0) > 3600
+        if not refresh and outdated and not traded <= lookup.keys():
+            continue
         holdings = kraken_holdings(balances, markets)
-        routes = kraken_routes(holdings, markets, quote)
-        names = sorted({leg[0] for route in routes.values() for leg in route})
+        quotes = [{"key": lookup[pair][1]} for pair in traded if pair in lookup]
+        routes = kraken_routes(holdings + quotes, markets, quote)
+        online = {pair[0] for pair in markets["pairs"]}
+        names = sorted({leg[0] for route in routes.values() for leg in route} | (traded & online))
         try:
-            return holdings, routes, kraken_request("/0/public/Ticker", {"pair": ",".join(names)}) if names else {}
+            return markets, holdings, routes, kraken_request("/0/public/Ticker", {"pair": ",".join(names)}) if names else {}
         except KrakenError as exc:
             if exc.code != "EQuery:Unknown asset pair" or refresh:
                 raise
@@ -1303,15 +1319,133 @@ def kraken_symbol(name):
     return "/".join(KRAKEN_RENAMES.get(part, part) for part in name.split("/"))
 
 
+def kraken_rollover(terms):
+    """Share of the borrowed amount charged per day, from terms such as "0.0100% per 4 hours"."""
+    match = re.fullmatch(r"\s*([0-9]*\.?[0-9]+)\s*%\s*per\s*([0-9]+)\s*hours?\s*", terms if isinstance(terms, str) else "")
+    if not match or int(match.group(2)) <= 0:
+        return None
+    return float(match.group(1)) / 100 * 24 / int(match.group(2))
+
+
+def kraken_open_positions(config, root):
+    """Open margin positions by trade id, valued by Kraken."""
+    positions = kraken_private("OpenPositions", config, root, {"docalcs": "true"})
+    return {txid: position for txid, position in positions.items()
+            if isinstance(position, dict) and position.get("posstatus", "open") == "open"}
+
+
+def kraken_trade_balance(config, root, quote):
+    """Kraken's margin account figures in the portfolio currency."""
+    trade = kraken_private("TradeBalance", config, root, {"asset": quote})
+    return {"equity": number(trade.get("e")), "tradeBalance": number(trade.get("tb")),
+            "used": number(trade.get("m")), "unrealized": number(trade.get("n"))}
+
+
+def kraken_positions(positions, markets, routes, tickers, quote):
+    """Open positions per market and side, largest first. Kraken lists every fill as its own
+    position; fills are summed, and cost and margin count only the part still open."""
+    lookup, assets = markets.get("lookup") or {}, markets["assets"]
+    midnight = time.time() // 86400 * 86400
+
+    def total(fills, field, share=False):
+        values = [fill[field] * (fill["share"] if share else 1) for fill in fills if fill[field] is not None]
+        return sum(values) if len(values) == len(fills) else None
+
+    def display(key):
+        name = assets[key]["altname"]
+        return KRAKEN_RENAMES.get(name, name)
+
+    groups = {}
+    for position in positions.values():
+        pair, side = position.get("pair"), position.get("type")
+        volume, closed = number(position.get("vol")), number(position.get("vol_closed")) or 0.0
+        cost = number(position.get("cost"))
+        if not isinstance(pair, str) or side not in ("buy", "sell") or not volume or volume <= closed or cost is None:
+            continue
+        terms = position.get("terms") if isinstance(position.get("terms"), str) else None
+        groups.setdefault((pair, side), []).append({
+            "amount": volume - closed, "share": (volume - closed) / volume, "entry": cost / volume, "cost": cost,
+            "margin": number(position.get("margin")), "fee": number(position.get("fee")),
+            "value": number(position.get("value")), "net": number(position.get("net")),
+            "time": number(position.get("time")), "terms": terms, "rollover": kraken_rollover(terms),
+            "next": number(position.get("rollovertm"))})
+    rows, levels = [], []
+    for (pair, side), fills in groups.items():
+        base, counter, name, call, stop = lookup.get(pair) or [None, None, pair, None, None]
+        if call and stop:
+            levels.append((call, stop))
+        sign = 1 if side == "buy" else -1
+        amount, cost = sum(fill["amount"] for fill in fills), total(fills, "cost", share=True)
+        # The last trade, or Kraken's own valuation for a market without a ticker.
+        price = kraken_rate([(pair, name, False)], tickers, "c")
+        if price is None and (value := total(fills, "value")):
+            price = value / amount
+        net = total(fills, "net")
+        if net is None and price is not None:
+            net = sign * (amount * price - cost)
+        # Value at today's 00:00 UTC open, or at entry for fills opened since.
+        open_price = kraken_rate([(pair, name, False)], tickers, "o")
+        references = [open_price if (fill["time"] or 0) < midnight else fill["entry"] for fill in fills]
+        # Kraken lends the cost of a long and the base amount of a short.
+        borrowed = [fill["cost"] * fill["share"] if sign > 0 else fill["amount"] * (price or 0) for fill in fills]
+        rollover = sum(fill["rollover"] * lent for fill, lent in zip(fills, borrowed)) \
+            if all(fill["rollover"] is not None for fill in fills) and (sign > 0 or price) else None
+        route = [] if counter == quote else routes.get(counter)
+        rate = kraken_rate(route, tickers, "c") if route is not None else None
+        terms = {fill["terms"] for fill in fills}
+        upcoming = [fill["next"] for fill in fills if fill["next"]]
+        rows.append({
+            "symbol": kraken_symbol(name), "side": "long" if sign > 0 else "short",
+            "base": display(base) if base in assets else name, "quote": display(counter) if counter in assets else "",
+            "amount": amount, "decimals": assets[base]["decimals"] if base in assets else 8,
+            "entryPrice": cost / amount, "price": price, "openPrice": open_price,
+            "openValue": sum(fill["amount"] * reference for fill, reference in zip(fills, references))
+            if None not in references else None,
+            "cost": cost, "margin": total(fills, "margin", share=True), "fee": total(fills, "fee"), "net": net,
+            # Quote currency to the portfolio currency, as for holdings.
+            "rate": rate,
+            "route": [{"symbol": kraken_symbol(leg), "invert": inverse} for _, leg, inverse in route] if route is not None else None,
+            "rolloverPerDay": rollover * rate if rollover is not None and rate is not None else None,
+            "terms": terms.pop() if len(terms) == 1 else None, "nextRollover": min(upcoming) if upcoming else None,
+            "opened": min((fill["time"] for fill in fills if fill["time"]), default=None), "fills": len(fills)})
+    rows.sort(key=lambda row: (-(row["cost"] * (row["rate"] or 0)), row["symbol"], row["side"]))
+    # The strictest market sets the account's thresholds.
+    return rows, ({"marginCall": max(call for call, _ in levels), "liquidation": max(stop for _, stop in levels)} if levels else {})
+
+
 def fetch_kraken(config, root, currency):
     currency = currency if currency in KRAKEN_QUOTES else "USD"
+    quote = KRAKEN_QUOTES[currency]
     balances = kraken_private("Balance", config, root)
-    error = None
+    errors, positions, margin = [], {}, None
+    if config.get("margin", True):
+        try:
+            positions = kraken_open_positions(config, root)
+            margin = {}
+        except KrakenError as exc:
+            if exc.code != "EGeneral:Permission denied":
+                errors.append("Margin: " + str(exc))
+            else:
+                # A key made for balances only is not a failed refresh.
+                margin = {"error": KRAKEN_MARGIN_PERMISSION}
+        except SourceError as exc:
+            errors.append("Margin: " + str(exc))
+        if positions:
+            try:
+                margin.update(kraken_trade_balance(config, root, quote))
+            except SourceError as exc:
+                errors.append("Margin: " + str(exc))
+    priced = True
     try:
-        holdings, routes, tickers = kraken_priced(balances, root, KRAKEN_QUOTES[currency])
+        markets, holdings, routes, tickers = kraken_priced(balances, positions, root, quote)
     except SourceError as exc:
         # Balances stay useful without prices.
-        holdings, routes, tickers, error = kraken_holdings(balances, kraken_markets(root)), {}, {}, "Prices: " + str(exc)
+        markets, priced = kraken_markets(root), False
+        holdings, routes, tickers = kraken_holdings(balances, markets), {}, {}
+        errors.insert(0, "Prices: " + str(exc))
+    if margin is not None and "error" not in margin:
+        rows, levels = kraken_positions(positions, markets, routes, tickers, quote)
+        margin.update(positions=rows, **levels)
     assets, total, change = [], 0.0, 0.0
     for holding in holdings:
         route = routes.get(holding["key"])
@@ -1329,10 +1463,13 @@ def fetch_kraken(config, root, currency):
                        "route": [{"symbol": kraken_symbol(name), "invert": inverse} for _, name, inverse in route]
                        if route else None})
     assets.sort(key=lambda asset: (asset["value"] is None, -(asset["value"] or 0), asset["symbol"]))
-    result = {"kraken": {"currency": currency, "totalValue": None if error else total,
-                         "changeValue": None if error else change, "assets": assets}}
-    if error:
-        result.update(status="partial", error=error)
+    # Balances and their change; the app adds the margin positions to both.
+    result = {"kraken": {"currency": currency, "totalValue": total if priced else None,
+                         "changeValue": change if priced else None, "assets": assets}}
+    if margin is not None:
+        result["kraken"]["margin"] = margin
+    if errors:
+        result.update(status="partial", error=" ".join(errors))
     return result
 
 

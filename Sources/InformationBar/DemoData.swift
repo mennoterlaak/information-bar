@@ -100,6 +100,21 @@ enum DemoData {
           krakenAsset("ADA", 0.4, decimals: 6, price: 0.5512, open: 0.5498),
           krakenAsset("USDT0", 5, decimals: 4),
         ],
+        // A 5× long on a dollar market and a 3× short on a euro market: 247.94 unrealized.
+        "margin": [
+          "equity": 9347.94, "tradeBalance": 9100, "used": 1625.83, "unrealized": 247.94,
+          "marginCall": 80, "liquidation": 40,
+          "positions": [
+            krakenPosition(
+              "BTC/USD", long: true, 0.05, decimals: 5, entry: 79000, price: 82938.2,
+              open: 82543, leverage: 5, rate: 0.893455, route: [("EUR/USD", true)],
+              terms: "0.0100% per 4 hours", opened: now - 3 * 86400, fills: 2),
+            krakenPosition(
+              "ETH/EUR", long: false, 1.2, decimals: 5, entry: 2300, price: 2239.99, open: 2221.6,
+              leverage: 3, rate: 1, route: [], terms: "0.0200% per 4 hours",
+              opened: now - 26 * 3600, fills: 1),
+          ],
+        ],
       ],
     ])
     result["power"] = decode([
@@ -158,6 +173,28 @@ enum DemoData {
     }
     if let open { asset["openPrice"] = open }
     return asset
+  }
+
+  /// A position opened before today, with the figures the collector derives from its fills.
+  private static func krakenPosition(
+    _ symbol: String, long: Bool, _ amount: Double, decimals: Int, entry: Double, price: Double,
+    open: Double, leverage: Double, rate: Double, route: [(String, Bool)], terms: String,
+    opened: Double, fills: Int
+  ) -> [String: Any] {
+    let parts = symbol.split(separator: "/").map(String.init)
+    let direction: Double = long ? 1 : -1
+    let cost = amount * entry
+    // 0.01% every 4 hours is 0.06% a day, of the cost of a long or the amount of a short.
+    let daily = (Double(terms.prefix { $0 != "%" }) ?? 0) / 100 * 6
+    return [
+      "symbol": symbol, "base": parts[0], "quote": parts[1], "side": long ? "long" : "short",
+      "amount": amount, "decimals": decimals, "entryPrice": entry, "price": price,
+      "openPrice": open, "openValue": amount * open, "cost": cost, "margin": cost / leverage,
+      "fee": cost * 0.0025, "net": direction * amount * (price - entry), "rate": rate,
+      "route": route.map { ["symbol": $0.0, "invert": $0.1] },
+      "rolloverPerDay": daily * (long ? cost : amount * price) * rate, "terms": terms,
+      "nextRollover": Date().timeIntervalSince1970 + 2 * 3600, "opened": opened, "fills": fills,
+    ]
   }
 
   #if os(macOS)

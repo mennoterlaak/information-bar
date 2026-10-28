@@ -19,7 +19,7 @@ enum ProviderCategory: String, CaseIterable, Codable, Identifiable {
     switch self {
     case .vast: return "GPU rentals & earnings"
     case .pearl: return "Mining, price & profit projections"
-    case .kraken: return "Spot portfolio & prices"
+    case .kraken: return "Portfolio, margin & prices"
     case .power: return "HomeWizard meters & electricity costs"
     case .codex, .claude, .cursor: return "Subscription usage & resets"
     }
@@ -106,7 +106,7 @@ enum MenuElementKind: String, Codable, CaseIterable {
   case tokenPrice, hashrate, profitHourly, profitDaily, profitWeekly, profitMonthly, watts,
     powerCost
   case walletBalance, poolBalance, totalPaid
-  case portfolioValue, portfolioChange, assetPrice
+  case portfolioValue, portfolioChange, assetPrice, marginPnL, marginLevel
 
   static func available(for category: ProviderCategory) -> [MenuElementKind] {
     switch category {
@@ -116,7 +116,8 @@ enum MenuElementKind: String, Codable, CaseIterable {
         .icon, .tokenPrice, .hashrate, .profitHourly, .profitDaily, .profitWeekly, .profitMonthly,
         .walletBalance, .poolBalance, .totalPaid,
       ]
-    case .kraken: return [.icon, .portfolioValue, .portfolioChange, .assetPrice]
+    case .kraken:
+      return [.icon, .portfolioValue, .portfolioChange, .assetPrice, .marginPnL, .marginLevel]
     case .power: return [.icon, .watts, .powerCost]
     case .codex, .claude, .cursor: return [.icon, .used, .remaining, .reset, .ring]
     }
@@ -148,6 +149,8 @@ enum MenuElementKind: String, Codable, CaseIterable {
     case .portfolioValue: return "Portfolio value"
     case .portfolioChange: return "Portfolio change today"
     case .assetPrice: return "Asset price"
+    case .marginPnL: return "Unrealized margin P&L"
+    case .marginLevel: return "Margin level"
     }
   }
 
@@ -174,6 +177,8 @@ enum MenuElementKind: String, Codable, CaseIterable {
     case .portfolioValue: return "briefcase"
     case .portfolioChange: return "arrow.up.arrow.down"
     case .assetPrice: return "tag"
+    case .marginPnL: return "plusminus.circle"
+    case .marginLevel: return "gauge.with.dots.needle.33percent"
     }
   }
 
@@ -231,10 +236,12 @@ struct ProviderPreferences: Codable, Equatable {
   var earningsView = EarningsView.gross
   /// Kraken only: stream prices from Kraken's public feed between balance refreshes.
   var livePrices = false
+  /// Kraken only: read open margin positions, which needs a second permission on the API key.
+  var marginPositions = true
 
   enum CodingKeys: String, CodingKey {
     case enabled, elements, showAdditional, showResetDates, showEarningsHistory
-    case showMachineDetails, currency, utilizationPeriod, earningsView, livePrices
+    case showMachineDetails, currency, utilizationPeriod, earningsView, livePrices, marginPositions
   }
 
   private enum LegacyKeys: String, CodingKey { case style, metric, windowID }
@@ -256,6 +263,7 @@ struct ProviderPreferences: Codable, Equatable {
       try values.decodeIfPresent(UtilizationPeriod.self, forKey: .utilizationPeriod) ?? .week
     earningsView = try values.decodeIfPresent(EarningsView.self, forKey: .earningsView) ?? .gross
     livePrices = try values.decodeIfPresent(Bool.self, forKey: .livePrices) ?? false
+    marginPositions = try values.decodeIfPresent(Bool.self, forKey: .marginPositions) ?? true
     if let saved = try values.decodeIfPresent([MenuElement].self, forKey: .elements) {
       elements = saved
     } else {
@@ -425,10 +433,18 @@ extension Provider {
     case .powerCost:
       return power.displayCostPerDay.map { power.money.local($0) + "/d" } ?? "—"
     case .portfolioValue:
-      guard let kraken, let total = kraken.totalValue else { return "—" }
+      guard let kraken, let total = kraken.accountValue else { return "—" }
       return kraken.money.local(total, digits: total >= 1000 ? 0 : 2)
     case .portfolioChange:
       return kraken?.changeFraction.map { formatChange($0, digits: 1) } ?? "—"
+    case .marginPnL:
+      // No positions is zero; a key that cannot read them, or margin turned off, is unknown.
+      guard let kraken, let margin = kraken.margin, margin.error == nil else { return "—" }
+      guard margin.isOpen else { return kraken.money.local(0) }
+      guard let pnl = margin.unrealizedNow else { return "—" }
+      return formatSigned(pnl, money: kraken.money, digits: abs(pnl) >= 1000 ? 0 : 2)
+    case .marginLevel:
+      return kraken?.openMargin?.levelNow.map(formatMarginLevel) ?? "—"
     case .assetPrice:
       guard let kraken, let asset = kraken.asset(element.asset) else { return "—" }
       let price = formatPrice(asset.price, money: kraken.money, compact: true)

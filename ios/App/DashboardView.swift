@@ -152,7 +152,7 @@ struct DashboardView: View {
   }
 
   private func heroChangeColor(_ summary: MobileSummary) -> Color {
-    guard summary.category == .kraken, let change = summary.provider?.kraken?.changeValue else { return .secondary }
+    guard summary.category == .kraken, let change = summary.provider?.kraken?.accountChange else { return .secondary }
     return change < 0 ? .orange : Color(red: 0.17, green: 0.48, blue: 0.37)
   }
 
@@ -454,7 +454,7 @@ struct MobileProviderDetail: View {
   private func krakenDetails(_ provider: Provider, summary: MobileSummary) -> some View {
     VStack(alignment: .leading, spacing: 24) {
       if let kraken = provider.kraken {
-        Text("Since 00:00 UTC · \(kraken.money.local(kraken.changeValue))")
+        Text("Since 00:00 UTC · \(kraken.money.local(kraken.accountChange))")
           .font(.subheadline).foregroundStyle(.secondary)
         ForEach(kraken.assets) { asset in
           VStack(alignment: .leading, spacing: 12) {
