@@ -4,7 +4,7 @@ project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 # Single source of truth for the version: Settings and the collector read it from the bundle.
 version="1.2.0"
-build="11"
+build="12"
 swift build -c release
 binary_dir="$(swift build -c release --show-bin-path)"
 app_dir="$project_dir/dist/Information Bar.app"

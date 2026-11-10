@@ -1072,16 +1072,34 @@ def pfpool_wallet_source(config, root, source, ttl, load):
     return {key: value for key, value in result.items() if key != "checkedAt"}
 
 
+def pfpool_worker_online(row):
+    """Whether a listed worker is online; None when the row is not recognized.
+
+    PF Pool groups a worker's connected sessions under it, each with its own `stale` flag; the
+    worker is online while one of them is current. Until November 2026 it listed one row per
+    session with `stale` on the row itself, and that form is still read.
+    """
+    if not isinstance(row, dict):
+        return None
+    if isinstance(row.get("stale"), bool):
+        return not row["stale"]
+    sessions = row.get("sessions")
+    if not isinstance(sessions, list) or not all(
+            isinstance(session, dict) and isinstance(session.get("stale"), bool) for session in sessions):
+        return None
+    return any(not session["stale"] for session in sessions)
+
+
 def parse_pfpool_hashrate(shares, connections, wallet):
     """PF Pool's rolling averages of accepted work in H/s, for every worker of the address."""
     rolling, workers = shares.get("rolling_hashrates"), connections.get("workers")
     if workers is None:
         workers = []  # No connected sessions.
+    states = [pfpool_worker_online(row) for row in workers] if isinstance(workers, list) else [None]
     if (not pfpool_address(shares.get("miner_address"), wallet) or not pfpool_address(connections.get("address"), wallet)
             or connections.get("configured") is not True or not isinstance(rolling, list)
             or not all(isinstance(row, dict) and isinstance(row.get("share_statistics"), dict) for row in rolling)
-            or not isinstance(workers, list)
-            or not all(isinstance(row, dict) and isinstance(row.get("stale"), bool) for row in workers)):
+            or any(state is None for state in states)):
         raise SourceError("PF Pool returned unrecognized hashrate data.")
     rates = {number(row.get("hours")): (number(row.get("hashrate")), timestamp(row["share_statistics"].get("to")))
              for row in rolling}
@@ -1095,7 +1113,7 @@ def parse_pfpool_hashrate(shares, connections, wallet):
         raise SourceError("PF Pool has not reported a valid 1-hour hashrate yet.")
     if not -60 <= time.time() - updated < 1800:
         raise SourceError("PF Pool's hashrate is stale.")
-    online = sum(not row["stale"] for row in workers)
+    online = sum(states)
     # As with offline Kryptex workers, the current rate is zero once no worker is connected.
     return {"hashrate1h": current if online else 0.0, "hashrate8h": average(8), "hashrate24h": average(24),
             "onlineWorkers": online, "workerCount": len(workers)}

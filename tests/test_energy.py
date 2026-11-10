@@ -509,6 +509,25 @@ class PFPoolTests(unittest.TestCase):
                 self.assertEqual(offline["hashrate24h"], 310e12)
                 self.assertEqual(offline["onlineWorkers"], 0)
 
+    def test_workers_with_grouped_sessions_are_online_while_one_session_is_current(self):
+        def sessions(*stale):
+            return {"worker": "rig", "sessions": [{"session_id": "1", "stale": value} for value in stale]}
+
+        with patch.object(c.time, "time", return_value=NOW + 60):
+            # One worker reconnecting next to its old session, one with only a stale session.
+            grouped = pf_connections(workers=[sessions(True, False), sessions(True)])
+            result = c.parse_pfpool_hashrate(pf_shares(), grouped, WALLET)
+            self.assertEqual((result["hashrate1h"], result["onlineWorkers"], result["workerCount"]), (330e12, 1, 2))
+            for workers in ([sessions(True)], [sessions()]):
+                offline = c.parse_pfpool_hashrate(pf_shares(), pf_connections(workers=workers), WALLET)
+                self.assertEqual((offline["hashrate1h"], offline["onlineWorkers"]), (0, 0))
+            # A session without a readable state is not guessed at.
+            for workers in ([{"worker": "rig", "sessions": [{"session_id": "1"}]}],
+                            [{"worker": "rig", "sessions": [{"stale": "false"}]}],
+                            [{"worker": "rig", "sessions": {"stale": False}}], ["rig"]):
+                with self.subTest(workers=workers), self.assertRaises(c.SourceError):
+                    c.parse_pfpool_hashrate(pf_shares(), pf_connections(workers=workers), WALLET)
+
     def test_hashrate_rejects_other_addresses_missing_current_rate_and_stale_data(self):
         shares = pf_shares()
         with patch.object(c.time, "time", return_value=NOW + 60):
