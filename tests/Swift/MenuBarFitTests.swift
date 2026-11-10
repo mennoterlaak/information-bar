@@ -103,7 +103,14 @@ final class MenuBarFitTests: XCTestCase {
         [1, 2, 2], [1, 2, 1], [1, 1, 1],  // extra values, from the longest item
         [1, 1, 1],  // labels
         [1, 1, 0], [1, 0, 0], [0, 0, 0],  // icons, from the last item
+        [0, 0, 0], [0, 0, 0],  // items leaving the menu bar, from the last
       ])
+    // Nothing leaves the menu bar while there is detail left to give up, and the first item
+    // always stays: a status item that does not fit is hidden by macOS as a whole.
+    XCTAssertEqual(
+      ladder.map { $0.map(\.hidden) }.suffix(3),
+      [[false, false, false], [false, false, true], [false, true, true]])
+    XCTAssertFalse(ladder.dropLast(2).contains { $0.contains(where: \.hidden) })
     // Labels stay through the first four arrangements and are gone from the fifth.
     XCTAssertEqual(ladder.map { $0.allSatisfy(\.labels) }.firstIndex(of: false), 4)
     XCTAssertFalse(ladder.dropFirst(4).contains { $0.contains(where: \.labels) })
@@ -113,7 +120,10 @@ final class MenuBarFitTests: XCTestCase {
 
   func testIconOnlyItemsHaveNothingToGiveUp() {
     let ladder = MenuBarFit.ladder(valueCounts: [0, 1])
-    XCTAssertEqual(ladder.dropFirst().map(values), [[0, 1], [0, 0]])
+    XCTAssertEqual(ladder.dropFirst().map(values), [[0, 1], [0, 0], [0, 0]])
+    XCTAssertEqual(ladder.last?.map(\.hidden), [false, true])
+    // A single item has nowhere to go, and neither has an empty menu bar.
+    XCTAssertFalse(MenuBarFit.ladder(valueCounts: [2]).contains { $0.contains(where: \.hidden) })
     XCTAssertEqual(MenuBarFit.ladder(valueCounts: []).count, 2)
   }
 
@@ -128,12 +138,15 @@ final class MenuBarFitTests: XCTestCase {
     // Pearl shows a price and a hashrate by default, Claude one percentage.
     XCTAssertEqual(preferences.menuCategories, [.pearl, .claude])
     XCTAssertEqual(
-      preferences.menuLadder.dropFirst().map(values), [[1, 1], [1, 1], [1, 0], [0, 0]])
+      preferences.menuLadder.dropFirst().map(values), [[1, 1], [1, 1], [1, 0], [0, 0], [0, 0]])
     XCTAssertFalse(preferences.isShortened(.pearl, at: 0))
     XCTAssertTrue(preferences.isShortened(.pearl, at: 1))
     // Claude still shows all it has until it falls back to its icon.
     XCTAssertFalse(preferences.isShortened(.claude, at: 2))
     XCTAssertTrue(preferences.isShortened(.claude, at: 3))
+    // At the last step Claude is out of the menu bar; Pearl, the first item, stays.
+    XCTAssertEqual(preferences.menuForms(at: 5)[.claude]?.hidden, true)
+    XCTAssertEqual(preferences.menuForms(at: 5)[.pearl]?.hidden, false)
     XCTAssertFalse(preferences.isShortened(.kraken, at: 4))
   }
 

@@ -17,7 +17,7 @@ Menu bar usage for ChatGPT, Claude and Cursor, Vast.ai rentals, Pearl mining, yo
 - Power: independent electricity tariff, HomeWizard device discovery (v1 and v2), measured draw and projected costs. Assign meters to Pearl or Vast.ai, or monitor a whole-house meter separately. Existing Vast.ai tariffs migrate automatically.
 - Menu bar items you compose yourself per provider: icon, values, rings and a 7-day graph, as in iStat Menus.
 - One group in the menu bar, in the order you set, so other apps' icons never end up between the items. Separate items that macOS places one by one remain an option.
-- Items that fit the display in use. Beside the notch of a MacBook display, or wherever the menu bar runs out of room, items are shortened instead of hidden: extra values go first, then labels, then everything but the icon, starting with the last item.
+- Items that fit the display in use. Beside the notch of a MacBook display, or wherever the menu bar runs out of room, items are shortened instead of hidden: extra values go first, then labels, then everything but the icon, starting with the last item. If even the icons do not fit, the last items leave the menu bar until there is room.
 
 ## Install
 

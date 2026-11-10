@@ -2,12 +2,15 @@ import CoreGraphics
 import Foundation
 
 /// How much of one composed item is drawn. When the menu bar is short of room, items give up
-/// detail in steps: extra values first, then labels, then everything but the icon.
+/// detail in steps: extra values first, then labels, then everything but the icon. An item
+/// leaves the menu bar only when even the icons do not fit.
 struct MenuItemForm: Equatable {
   /// Elements kept besides the icon. Anything at or above the composed count keeps them all.
   var values = Int.max
   /// Pool and asset prefixes, as in "5h 68%".
   var labels = true
+  /// Left out of the menu bar until there is room again.
+  var hidden = false
 
   static let full = MenuItemForm()
 }
@@ -46,7 +49,7 @@ extension ProviderPreferences {
 
   /// Whether `form` leaves out part of the composition.
   func isShortened(by form: MenuItemForm) -> Bool {
-    !elements.isEmpty && elements(in: form) != elements
+    form.hidden || (!elements.isEmpty && elements(in: form) != elements)
   }
 }
 
@@ -75,8 +78,11 @@ enum MenuBarFit {
   /// Each step is narrower than the one before:
   /// 1. the item with the most values loses its last one, until none shows more than one;
   /// 2. labels go;
-  /// 3. items fall back to their icon, starting with the last.
+  /// 3. items fall back to their icon, starting with the last;
+  /// 4. items leave the menu bar, starting with the last, until only the first remains.
   /// Ties in step 1 also start with the last item, so earlier items keep their detail longest.
+  /// Step 4 exists because macOS hides a status item that does not fit as a whole: a group
+  /// that is too wide even as icons would otherwise disappear altogether.
   static func ladder(valueCounts: [Int]) -> [[MenuItemForm]] {
     var kept = valueCounts.map { max(0, $0) }
     var steps = [kept.map { _ in MenuItemForm.full }]
@@ -88,6 +94,10 @@ enum MenuBarFit {
     for index in kept.indices.reversed() where kept[index] > 0 {
       kept[index] = 0
       steps.append(kept.map { MenuItemForm(values: $0, labels: false) })
+    }
+    for shown in stride(from: kept.count - 1, to: 0, by: -1) {
+      steps.append(
+        kept.indices.map { MenuItemForm(values: 0, labels: false, hidden: $0 >= shown) })
     }
     return steps
   }

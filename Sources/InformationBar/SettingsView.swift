@@ -368,7 +368,7 @@ struct GeneralSettings: View {
         sectionHeader(
           "Menu bar",
           info:
-            "One group keeps the items together, in the order of the list below. Separate items are placed one by one by macOS, which can put other apps' items between them. Hold ⌘ and drag to move the group or an item.\n\nShortened items drop extra values first, then labels, then everything but the icon, starting with the last item. When space is short follows the display in use, such as the room beside a MacBook's notch."
+            "One group keeps the items together, in the order of the list below. Separate items are placed one by one by macOS, which can put other apps' items between them. Hold ⌘ and drag to move the group or an item.\n\nShortened items drop extra values first, then labels, then everything but the icon, starting with the last item. If the icons do not fit either, the last items leave the menu bar until there is room. When space is short follows the display in use, such as the room beside a MacBook's notch."
         )
       }
       Section {
@@ -452,7 +452,7 @@ struct MenuBarPreview: View {
   }
 
   private func items(_ forms: [MenuItemForm]) -> some View {
-    let segments = zip(categories, forms).map { item, form in
+    let segments = zip(categories, forms).filter { !$0.1.hidden }.map { item, form in
       MenuBarSegment(
         category: item, provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue),
         options: store.preferences.provider(item).shortened(to: form))
@@ -648,8 +648,10 @@ struct CategorySettings: View {
       Section {
         MenuBarPreview(store: store, category: category)
         if options.enabled && store.preferences.isShortened(category, at: store.menuStep) {
+          let leftOut = store.preferences.menuForms(at: store.menuStep)[category]?.hidden == true
           Text(
-            "Shortened in the menu bar while space is short. General sets when items are shortened."
+            (leftOut ? "Left out of" : "Shortened in")
+              + " the menu bar while space is short. General sets when items are shortened."
           )
           .font(.callout).foregroundStyle(.secondary)
         }

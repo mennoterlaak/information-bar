@@ -67,7 +67,7 @@ struct RenderViews {
         VStack(alignment: .trailing, spacing: 6) {
           ForEach(Array(store.preferences.menuLadder.enumerated()), id: \.offset) { _, forms in
             MenuBarStripView(
-              segments: zip(shown, forms).map { category, form in
+              segments: zip(shown, forms).filter { !$0.1.hidden }.map { category, form in
                 MenuBarSegment(
                   category: category,
                   provider: store.providers[category.rawValue] ?? .placeholder(category.rawValue),

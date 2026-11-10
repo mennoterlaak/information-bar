@@ -128,6 +128,7 @@ final class MenuBarController: NSObject, NSViewToolTipOwner {
     rebuild(groups, layout: preferences.menuLayout)
     if let activeCategory, !categories.contains(activeCategory) { panel.dismiss() }
     let forms = fit(categories)
+    if let activeCategory, forms[activeCategory]?.hidden == true { panel.dismiss() }
     for (slot, group) in zip(slots, groups) { draw(slot, group, forms: forms) }
     if store.menuStep != step ?? 0 { store.menuStep = step ?? 0 }
     updateFallback()
@@ -194,7 +195,7 @@ final class MenuBarController: NSObject, NSViewToolTipOwner {
     let chrome = CGFloat(slots.count) * (Self.itemPadding - 2 * MenuBarMetrics.overflow)
     let width: (Int) -> CGFloat = { [self] index in
       zip(categories, ladder[index]).reduce(chrome) {
-        $0 + contentWidth($1.0, form: $1.1) + MenuBarMetrics.gap
+        $1.1.hidden ? $0 : $0 + contentWidth($1.0, form: $1.1) + MenuBarMetrics.gap
       }
     }
     var chosen = 0
@@ -213,12 +214,14 @@ final class MenuBarController: NSObject, NSViewToolTipOwner {
 
   /// Room for this app's items on the display that shows them now.
   private func limit() -> CGFloat? {
-    let frames = slots.compactMap { $0.item.button?.window?.frame }
+    // An item that is left out keeps the frame it had, so only the shown ones are measured.
+    let visible = slots.filter { !$0.segments.isEmpty }
+    let frames = visible.compactMap { $0.item.button?.window?.frame }
     let placed = frames.first { $0.height > 0 }
     let shown = placed.flatMap { frame in
       NSScreen.screens.first { $0.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) }
     }
-    if let shown, frames.count == slots.count,
+    if let shown, frames.count == visible.count,
       let measured = MenuBarSpace.others(
         items: frames, screen: shown.frame, rightOfNotch: shown.auxiliaryTopRightArea?.width),
       abs(measured - (others ?? -1)) > 0.5
@@ -267,6 +270,8 @@ final class MenuBarController: NSObject, NSViewToolTipOwner {
     var segments: [MenuBarSegment] = []
     var cells: [Cell] = []
     var x = -MenuBarMetrics.overflow
+    // A provider that does not fit even as an icon is left out until there is room.
+    let group = group.filter { forms[$0]?.hidden != true }
     for category in group {
       let form = forms[category] ?? .full
       let width = contentWidth(category, form: form)
@@ -280,6 +285,8 @@ final class MenuBarController: NSObject, NSViewToolTipOwner {
     }
     slot.segments = segments
     render(slot)
+    // A separate item whose provider is left out takes no room at all.
+    if slot.item.isVisible == group.isEmpty { slot.item.isVisible = !group.isEmpty }
     let total = x + MenuBarMetrics.overflow
     let length = max(1, total - 2 * MenuBarMetrics.overflow)
     if abs(slot.item.length - length) > 0.5 { slot.item.length = length }
@@ -480,11 +487,14 @@ final class MenuBarController: NSObject, NSViewToolTipOwner {
     }
     let lengths = slots.map { String(Int($0.item.length)) }.joined(separator: ",")
     // Left edges of the status items, which read left to right when the order is right.
-    let edges = slots.map { $0.item.button?.window?.frame.minX ?? 0 }
+    let edges = slots.filter { !$0.segments.isEmpty }.map {
+      $0.item.button?.window?.frame.minX ?? 0
+    }
     let ordered = zip(edges, edges.dropFirst()).allSatisfy { $0 < $1 }
+    let hidden = store.preferences.menuCategories.count - forms.count
     return "menu bar layout \(store.preferences.menuLayout.rawValue) step \(step ?? 0) limit "
       + (lastLimit.map { String(Int($0)) } ?? "none")
       + " others \(others.map { String(Int($0)) } ?? "unknown") lengths \(lengths) order "
-      + (ordered ? "ok" : "mixed") + " values " + forms.joined(separator: " ")
+      + (ordered ? "ok" : "mixed") + " left out \(hidden) values " + forms.joined(separator: " ")
   }
 }
