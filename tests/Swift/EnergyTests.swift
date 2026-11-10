@@ -218,6 +218,7 @@ final class EnergyTests: XCTestCase {
     XCTAssertEqual(preferences.power.pricePerKWh, 0.23)
     XCTAssertEqual(preferences.pearl.walletAddress, "")
     XCTAssertEqual(preferences.pearl.averageWindow, .week)
+    XCTAssertEqual(preferences.pearl.pool, .pfPool)
     let saved = String(decoding: try JSONEncoder().encode(preferences), as: UTF8.self)
     XCTAssertFalse(saved.contains("minerURL"))
     XCTAssertFalse(saved.contains("minerFeePercent"))
@@ -230,14 +231,58 @@ final class EnergyTests: XCTestCase {
     XCTAssertEqual(preferences.averageWindow, .week)
     XCTAssertEqual(preferences.walletAddress, "prl1example")
     XCTAssertEqual(preferences.workerName, "rtx4090")
-    for window in PearlAverageWindow.allCases {
-      preferences.averageWindow = window
-      XCTAssertEqual(
-        try JSONDecoder().decode(PearlPreferences.self, from: JSONEncoder().encode(preferences)),
-        preferences)
+    for pool in PearlPool.allCases {
+      for window in pool.windows {
+        preferences.pool = pool
+        preferences.averageWindow = window
+        XCTAssertEqual(
+          try JSONDecoder().decode(PearlPreferences.self, from: JSONEncoder().encode(preferences)),
+          preferences)
+      }
     }
     let unknown = Data(#"{"walletAddress":"prl1example","averageWindow":"unknown"}"#.utf8)
     XCTAssertEqual(try JSONDecoder().decode(PearlPreferences.self, from: unknown).averageWindow, .week)
+  }
+
+  func testExistingSettingsMoveToPFPoolWithTheMatchingAverage() throws {
+    func decode(_ json: String) throws -> PearlPreferences {
+      try JSONDecoder().decode(PearlPreferences.self, from: Data(json.utf8))
+    }
+    let existing = try decode(#"{"walletAddress":"prl1example","workerName":"rtx4090","averageWindow":"30m"}"#)
+    XCTAssertEqual(existing.pool, .pfPool)
+    XCTAssertEqual(existing.averageWindow, .hour)
+    XCTAssertEqual(existing.workerName, "rtx4090")
+    XCTAssertEqual(try decode(#"{"averageWindow":"3h"}"#).averageWindow, .eightHours)
+    XCTAssertEqual(try decode(#"{"pool":"unknown","averageWindow":"24h"}"#).pool, .pfPool)
+    let kryptex = try decode(#"{"pool":"kryptex","averageWindow":"30m"}"#)
+    XCTAssertEqual(kryptex.pool, .kryptex)
+    XCTAssertEqual(kryptex.averageWindow, .thirtyMinutes)
+    XCTAssertEqual(try decode(#"{"pool":"kryptex","averageWindow":"8h"}"#).averageWindow, .threeHours)
+    XCTAssertEqual(PearlPreferences().pool, .pfPool)
+    XCTAssertEqual(PearlAverageWindow.week.available(in: .kryptex), .week)
+    XCTAssertEqual(PearlAverageWindow.hour.available(in: .kryptex), .thirtyMinutes)
+    for pool in PearlPool.allCases {
+      XCTAssertEqual(pool.windows.count, 4)
+      XCTAssertEqual(pool.windows.last, .week)
+    }
+  }
+
+  func testPearlReadingsNameTheirPoolAndItsAverages() throws {
+    let item = try provider("pearl", fields: ["pearl": [
+      "pool": "pfpool", "averageWindow": "1h", "hashrate": 330e12, "hashrate1h": 330e12,
+      "hashrate8h": 320e12, "hashrate24h": 310e12, "hashrate7d": 5e12,
+    ]])
+    let pearl = try XCTUnwrap(item.pearl)
+    XCTAssertEqual(pearl.source, .pfPool)
+    XCTAssertEqual(pearl.source.windows.map { pearl.hashrate(for: $0) }, [330e12, 320e12, 310e12, 5e12])
+    XCTAssertNil(pearl.hashrate(for: .thirtyMinutes))
+    XCTAssertEqual(pearl.effectiveAverageWindow.averageDescription, "1-hour average")
+    XCTAssertEqual(PearlPool.pfPool.poolName, "PF Pool")
+    XCTAssertEqual(PearlPool.kryptex.poolName, "Kryptex pool")
+    // Readings cached before the pool choice came from Kryptex.
+    let legacy = try provider("pearl", fields: ["pearl": ["averageWindow": "3h", "hashrate3h": 290e12]])
+    XCTAssertEqual(legacy.pearl?.source, .kryptex)
+    XCTAssertEqual(legacy.pearl?.hashrate(for: .threeHours), 290e12)
   }
 
   func testSelectedPearlAverageFeedsMenuAndProjectionWithAccurateLegacyLabel() throws {

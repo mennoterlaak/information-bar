@@ -383,6 +383,7 @@ struct MobileProviderDetail: View {
 
   private func pearlDetails(_ provider: Provider, summary: MobileSummary) -> some View {
     let pearl = provider.pearl
+    let pool = pearl?.source ?? snapshot.preferences.pearl.pool
     return VStack(alignment: .leading, spacing: 30) {
       detailSection("Projection") {
         ForEach(ProjectionPeriod.allCases) { period in
@@ -399,14 +400,14 @@ struct MobileProviderDetail: View {
       }
       detailSection("Mining") {
         detailRow("PRL price", summary.money.format(pearl?.priceUSD, digits: 3))
-        detailRow("30 minutes", formatHashrate(pearl?.shortHashrate))
-        detailRow("3 hours", formatHashrate(pearl?.hashrate3h))
-        detailRow("24 hours", formatHashrate(pearl?.hashrate24h))
-        detailRow("7 days", formatHashrate(pearl?.hashrate7d))
+        ForEach(pool.windows, id: \.self) { window in
+          detailRow(window.title, formatHashrate(pearl?.hashrate(for: window)))
+        }
         detailRow("Yield / day", formatPRL(pearl?.coinsPerDay, digits: 4))
         detailRow("Workers online", pearl?.onlineWorkers.map { online in
           pearl?.workerCount.map { "\(online) / \($0)" } ?? String(online)
         } ?? "—")
+        detailRow("Pool", pool.title)
         detailRow("Pool fee", pearl?.poolFeePercent.map { String(format: "%.2g%%", $0) } ?? "—")
         if let date = pearl?.priceUpdatedAt {
           sourceNote("Price", timestamp: date)
@@ -420,7 +421,10 @@ struct MobileProviderDetail: View {
         detailRow("Unpaid rewards", formatPRL(pearl?.poolBalance, digits: 4))
         detailRow("Confirmed", formatPRL(pearl?.poolConfirmed, digits: 4))
         detailRow("Maturing", formatPRL(pearl?.poolUnconfirmed, digits: 4))
-        detailRow("Payout threshold", formatPRL(pearl?.payoutThreshold, digits: 2))
+        // PF Pool publishes no threshold.
+        if pool != .pfPool {
+          detailRow("Payout threshold", formatPRL(pearl?.payoutThreshold, digits: 2))
+        }
         if let progress = summary.progress { MobileProgress(fraction: progress, tint: summary.tint) }
         detailRow("Total paid", formatPRL(pearl?.totalPaid, digits: 4))
       }

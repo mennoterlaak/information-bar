@@ -4,11 +4,12 @@ import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from test_collect import c
 
 WALLET = "prl1" + "x" * 59
+KRYPTEX = {"pool": "kryptex", "walletAddress": WALLET}
 
 
 def pool_worker(name="rtx4090", **overrides):
@@ -80,7 +81,7 @@ class MiningTests(unittest.TestCase):
     def test_pool_failure_does_not_hide_price_or_invent_projection(self):
         with tempfile.TemporaryDirectory() as root, patch.object(c, "pearl_price", return_value={"priceUSD": 1.1, "updatedAt": 1000}), \
                 patch.object(c, "pearl_workers", side_effect=c.SourceError("Pool unavailable.")):
-            result = c.fetch_pearl({"walletAddress": WALLET}, Path(root))
+            result = c.fetch_pearl({**KRYPTEX}, Path(root))
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["pearl"]["priceUSD"], 1.1)
         self.assertNotIn("hashrate", result["pearl"])
@@ -91,7 +92,7 @@ class MiningTests(unittest.TestCase):
             return {"results": [pool_worker()]} if "/workers/" in url else {"ticker": "prl", "estimated_profit_day": 2e-14, "fee": .02}
         with tempfile.TemporaryDirectory() as root, patch.object(c, "pearl_price", side_effect=c.SourceError("Price unavailable.")), \
                 patch.object(c, "local_json") as local, patch.object(c, "request_json", side_effect=response):
-            result = c.fetch_pearl({"walletAddress": WALLET, "minerURL": "http://retired.local", "minerFeePercent": 2}, Path(root))
+            result = c.fetch_pearl({**KRYPTEX, "minerURL": "http://retired.local", "minerFeePercent": 2}, Path(root))
             local.assert_not_called()
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["pearl"]["hashrate"], 300e12)
@@ -102,7 +103,7 @@ class MiningTests(unittest.TestCase):
         workers = c.parse_pool_workers({"results": [pool_worker(scheme="solo")]}, WALLET)
         with tempfile.TemporaryDirectory() as root, patch.object(c, "pearl_price", return_value={"priceUSD": 1.1, "updatedAt": 1000}), \
                 patch.object(c, "pearl_workers", return_value=workers):
-            result = c.fetch_pearl({"walletAddress": WALLET}, Path(root))
+            result = c.fetch_pearl({**KRYPTEX}, Path(root))
         self.assertEqual(result["pearl"]["hashrate"], 300e12)
         self.assertNotIn("coinsPerDay", result["pearl"])
         self.assertIn("PPS+", result["error"])
@@ -113,7 +114,7 @@ class MiningTests(unittest.TestCase):
                     patch.object(c, "pearl_price", return_value={"priceUSD": 1, "updatedAt": 1000}), \
                     patch.object(c, "pearl_workers", return_value=c.parse_pool_workers(
                         {"results": [pool_worker(avg_hashrate_30m=400e12)]}, WALLET)):
-                config = {"walletAddress": WALLET}
+                config = dict(KRYPTEX)
                 if window is not None:
                     config["averageWindow"] = window
                 result = c.fetch_pearl(config, Path(root))
@@ -130,7 +131,7 @@ class MiningTests(unittest.TestCase):
                     patch.object(c, "pearl_workers", return_value=c.parse_pool_workers(
                         {"results": [pool_worker(avg_hashrate_3h=None)]}, WALLET)), \
                     patch.object(c, "pearl_history", side_effect=c.SourceError("History unavailable.")):
-                result = c.fetch_pearl({"walletAddress": WALLET, "averageWindow": window}, Path(root))
+                result = c.fetch_pearl({**KRYPTEX, "averageWindow": window}, Path(root))
             self.assertEqual(result["pearl"]["priceUSD"], 1)
             self.assertEqual(result["pearl"]["hashrate30m"], 300e12)
             if window == "30m":
@@ -146,7 +147,7 @@ class MiningTests(unittest.TestCase):
                 patch.object(c, "pearl_price", return_value={"priceUSD": 1, "updatedAt": 1000}), \
                 patch.object(c, "pearl_workers", return_value=c.parse_pool_workers(
                     {"results": [pool_worker(status="offline")]}, WALLET)):
-            result = c.fetch_pearl({"walletAddress": WALLET}, Path(root))
+            result = c.fetch_pearl({**KRYPTEX}, Path(root))
         self.assertEqual(result["pearl"]["hashrate"], 300e12)
         self.assertEqual(result["pearl"]["hashrate30m"], 0)
         self.assertEqual(result["pearl"]["onlineWorkers"], 0)
@@ -285,7 +286,7 @@ class HashrateHistoryTests(unittest.TestCase):
             self.assertEqual(fetch.call_count, 2)
             path = Path(root) / "pearl.json"
             cached = json.loads(path.read_text())
-            cached["configKey"] = cached["configKey"].replace("kryptex-average-v2:", "kryptex-wallet-v1:")
+            cached["configKey"] = cached["configKey"].replace("pearl-pool-v1:", "kryptex-average-v2:")
             path.write_text(json.dumps(cached))
             c.collect("pearl", config={**config, "averageWindow": "3h"}, cache_dir=root)
             self.assertEqual(fetch.call_count, 3)
@@ -374,7 +375,7 @@ class WalletTests(unittest.TestCase):
                 patch.object(c, "pearl_balance", return_value={"poolBalance": 2}), \
                 patch.object(c, "pearl_payouts", return_value={"payouts": [], "payoutCount": 0}), \
                 patch.object(c, "pearl_paid", return_value={"totalPaid": 7}):
-            result = c.fetch_pearl({"walletAddress": WALLET}, Path(root))
+            result = c.fetch_pearl({**KRYPTEX}, Path(root))
         self.assertEqual(result["status"], "partial")
         self.assertNotIn("walletBalance", result["pearl"])
         self.assertEqual(result["pearl"]["poolBalance"], 2)
@@ -390,7 +391,7 @@ class WalletTests(unittest.TestCase):
                 patch.object(c, "pearl_balance", side_effect=c.SourceError("Unavailable.")), \
                 patch.object(c, "pearl_payouts", side_effect=c.SourceError("Unavailable.")), \
                 patch.object(c, "pearl_paid", side_effect=c.SourceError("Unavailable.")):
-            result = c.fetch_pearl({"walletAddress": WALLET}, Path(root))
+            result = c.fetch_pearl({**KRYPTEX}, Path(root))
         self.assertEqual(result["pearl"]["walletBalance"], 7)
         self.assertNotIn("payouts", result["pearl"])
         self.assertNotIn("poolBalance", result["pearl"])
@@ -414,6 +415,342 @@ class WalletTests(unittest.TestCase):
             request.side_effect = None
             request.return_value = {"count": 0, "results": []}
             self.assertEqual(c.pearl_payouts({"walletAddress": WALLET}, Path(root))["payouts"], [])
+
+
+NOW = 1_800_000_000  # On the hour.
+SHORT = WALLET[:10] + "..." + WALLET[-8:]  # How PF Pool echoes most addresses.
+PF_MODE = {"bridge_configured": True, "bridge": {"address": WALLET, "payment_mode": "pps", "pps_fee_rate": .03}}
+PF_SUMMARY = {"chain": "pearl", "pool_stats": {"rolling_stats": [
+    {"hours": 0, "yield": 2e-8, "theoretical_yield": 2e-8}, {"hours": 1, "yield": 9e-8, "theoretical_yield": 3e-8}]}}
+
+
+def pf_shares(to=NOW, **overrides):
+    rows = [{"hours": hours, "hashrate": rate, "share_statistics": {"from": to - hours * 3600, "to": to}}
+            for hours, rate in ((1, 330e12), (8, 320e12), (24, 310e12))]
+    return {"miner_address": SHORT, "rolling_hashrates": rows, **overrides}
+
+
+def pf_connections(*stale, **overrides):
+    return {"configured": True, "address": SHORT, "workers": [
+        {"worker": "rtx4090", "stale": value, "reported_hashrate": 330e12} for value in stale], **overrides}
+
+
+def pf_history(rates=None, end=NOW + 1800):
+    """Hourly buckets as PF Pool reports them: 168 full hours plus the current partial hour."""
+    first = end - end % 3600 - 168 * 3600
+    rows = []
+    for index in range(169):
+        start = first + index * 3600
+        finish = min(start + 3600, end)
+        rows.append({"hour": start, "share_statistics": {
+            "from": start, "to": finish, "effective_hashrate": rates[index] if rates else 300e12,
+            "observed_ms": (finish - start) * 1000, "complete": True}})
+    return {"miner_address": SHORT, "series": rows}
+
+
+def pf_balance(**overrides):
+    return {"address": WALLET, "atomic_units_per_coin": "100000000", "immature_q64": str(50_000_000 * 2 ** 64),
+            "remainder_q64": str(2 ** 63), "balance_atomic": "25000000", **overrides}
+
+
+def pf_payout(index, **overrides):
+    return {"entry_type": "payout", "amount_atomic": str(100_000_000 + index), "status": "confirmed",
+            "event_time": "2026-10-2%dT12:00:00+08:00" % index, "tx_hash": "%064x" % index,
+            "to_address": SHORT, **overrides}
+
+
+def pf_ledger(rows=None, total=None, paid="1234567890"):
+    rows = [pf_payout(index) for index in range(7)] if rows is None else rows
+    return {"miner_address": SHORT, "entries": rows, "total": len(rows) if total is None else total,
+            "sum_payout_amount_atomic": paid}
+
+
+def pf_router(history=None, mode=None, requested=None):
+    def respond(url):
+        if requested is not None:
+            requested.append(url)
+        routes = {"/hourly-shares?hours=24": pf_shares(NOW + 1800), "/hourly-shares?hours=168": history or pf_history(),
+                  "/connections": pf_connections(False), "/address-mode": mode or PF_MODE,
+                  "/pps?status=pending": pf_balance(), "/ledger?page=1&page_size=5&entry_type=payout": pf_ledger(),
+                  "/summary?hours=24": PF_SUMMARY}
+        for path, data in routes.items():
+            if url.endswith(path):
+                return {"data": data}
+        raise AssertionError("Unexpected request " + url)
+    return respond
+
+
+class PFPoolTests(unittest.TestCase):
+    def setUp(self):
+        for name, value in (("pearl_price", {"priceUSD": 1.5, "updatedAt": NOW}), ("pearl_wallet", {"walletBalance": 7})):
+            stub = patch.object(c, name, return_value=value)
+            stub.start()
+            self.addCleanup(stub.stop)
+
+    def test_shortened_addresses_must_match_the_saved_wallet(self):
+        self.assertTrue(c.pfpool_address(WALLET, WALLET))
+        self.assertTrue(c.pfpool_address(SHORT, WALLET))
+        other = "prl1" + "y" * 59
+        for reported in (other, other[:10] + "..." + other[-8:], "prl1x..." + WALLET[-8:], SHORT[:-12] + "...xxxxx",
+                         "prl1xxxxxx...", None, 7):
+            with self.subTest(reported=reported):
+                self.assertFalse(c.pfpool_address(reported, WALLET))
+
+    def test_rolling_averages_cover_the_address_and_count_connected_workers(self):
+        with patch.object(c.time, "time", return_value=NOW + 60):
+            result = c.parse_pfpool_hashrate(pf_shares(), pf_connections(False, True), WALLET)
+            self.assertEqual(result, {"hashrate1h": 330e12, "hashrate8h": 320e12, "hashrate24h": 310e12,
+                                      "onlineWorkers": 1, "workerCount": 2})
+            self.assertNotIn("rtx4090", json.dumps(result))
+            # PF Pool lists only connected sessions; without one the current rate is zero.
+            for connections in (pf_connections(), pf_connections(True), pf_connections(workers=None)):
+                offline = c.parse_pfpool_hashrate(pf_shares(), connections, WALLET)
+                self.assertEqual(offline["hashrate1h"], 0)
+                self.assertEqual(offline["hashrate24h"], 310e12)
+                self.assertEqual(offline["onlineWorkers"], 0)
+
+    def test_hashrate_rejects_other_addresses_missing_current_rate_and_stale_data(self):
+        shares = pf_shares()
+        with patch.object(c.time, "time", return_value=NOW + 60):
+            for bad_shares, connections in (
+                    (pf_shares(miner_address="prl1yyyyyy...yyyyyyyy"), pf_connections(False)),
+                    (shares, pf_connections(False, address="prl1yyyyyy...yyyyyyyy")),
+                    (shares, pf_connections(False, configured=False)),
+                    (shares, pf_connections(workers=[{"worker": "rtx4090"}])),
+                    (pf_shares(rolling_hashrates=None), pf_connections(False)),
+                    (pf_shares(rolling_hashrates=[{"hours": 1, "hashrate": 1}]), pf_connections(False)),
+                    (pf_shares(rolling_hashrates=shares["rolling_hashrates"][1:]), pf_connections(False))):
+                with self.subTest(shares=str(bad_shares)[:60], connections=str(connections)[:60]), \
+                        self.assertRaises(c.SourceError):
+                    c.parse_pfpool_hashrate(bad_shares, connections, WALLET)
+            for value in (-1, None, True, "nan", "Infinity", []):
+                bad = pf_shares()
+                bad["rolling_hashrates"][0]["hashrate"] = value
+                with self.subTest(value=value), self.assertRaises(c.SourceError):
+                    c.parse_pfpool_hashrate(bad, pf_connections(False), WALLET)
+            longer = pf_shares()
+            longer["rolling_hashrates"][1]["hashrate"] = None
+            self.assertIsNone(c.parse_pfpool_hashrate(longer, pf_connections(False), WALLET)["hashrate8h"])
+        with patch.object(c.time, "time", return_value=NOW + 1800), self.assertRaises(c.SourceError):
+            c.parse_pfpool_hashrate(shares, pf_connections(False), WALLET)
+
+    def test_week_clips_the_first_hour_and_counts_hours_before_mining_as_zero(self):
+        with patch.object(c.time, "time", return_value=NOW + 1860):
+            self.assertEqual(c.parse_pfpool_history(pf_history(), WALLET),
+                             {"hashrate7d": 300e12, "historyUpdatedAt": NOW + 1800})
+            # Only the last half of the oldest hour falls inside the seven days.
+            rates = [900e12] + [300e12] * 168
+            self.assertAlmostEqual(c.parse_pfpool_history(pf_history(rates), WALLET)["hashrate7d"],
+                                   300e12 + 600e12 * 0.5 / 168, delta=1)
+            # Mining here for the last 83.5 of 168 hours.
+            rates = [0] * 85 + [300e12] * 84
+            self.assertAlmostEqual(c.parse_pfpool_history(pf_history(rates), WALLET)["hashrate7d"],
+                                   300e12 * 83.5 / 168, delta=1)
+            # An hour that has only just begun is ignored, and partly observed hours keep the pool's rate.
+            data = pf_history()
+            data["series"][5]["share_statistics"]["observed_ms"] = 3_593_000
+            data["series"].append({"share_statistics": {"from": NOW + 1800, "to": NOW + 1800, "effective_hashrate": 0,
+                                                        "observed_ms": 0}})
+            self.assertEqual(c.parse_pfpool_history(data, WALLET)["hashrate7d"], 300e12)
+
+    def test_week_rejects_gaps_overlaps_unobserved_short_stale_and_malformed_history(self):
+        def changed(index, **fields):
+            data = pf_history()
+            data["series"][index]["share_statistics"].update(fields)
+            return data
+        gap = pf_history()
+        del gap["series"][80]
+        short = pf_history()
+        del short["series"][0]
+        cases = [gap, short, changed(80, to=NOW - 80 * 3600), changed(80, observed_ms=0),
+                 changed(80, effective_hashrate=-1), changed(80, effective_hashrate=None),
+                 changed(80, effective_hashrate=True), changed(80, effective_hashrate="nan"),
+                 changed(80, **{"from": None}), changed(80, to=0), {"miner_address": SHORT, "series": None},
+                 {"miner_address": SHORT, "series": [None, None]}, {**pf_history(), "miner_address": "prl1y...yyyyyy"}]
+        with patch.object(c.time, "time", return_value=NOW + 1860):
+            for data in cases:
+                with self.subTest(case=str(data)[:80]), self.assertRaises(c.SourceError):
+                    c.parse_pfpool_history(data, WALLET)
+        with patch.object(c.time, "time", return_value=NOW + 3600), self.assertRaises(c.SourceError):
+            c.parse_pfpool_history(pf_history(), WALLET)
+
+    def test_yield_uses_current_theoretical_rate_and_the_address_pps_fee(self):
+        self.assertEqual(c.parse_pfpool_yield(PF_SUMMARY), {"yieldPerHashDay": 2e-14})
+        for data in ({**PF_SUMMARY, "chain": "nock-ai"}, {"chain": "pearl"},
+                     {"chain": "pearl", "pool_stats": {"rolling_stats": [{"hours": 0, "theoretical_yield": 0}]}},
+                     {"chain": "pearl", "pool_stats": {"rolling_stats": [{"hours": 1, "theoretical_yield": 2e-8}]}}):
+            with self.subTest(data=data), self.assertRaises(c.SourceError):
+                c.parse_pfpool_yield(data)
+        self.assertEqual(c.parse_pfpool_mode(PF_MODE, WALLET), {"scheme": "pps", "fee": .03})
+        for bridge in ({"address": SHORT}, {"payment_mode": "solo"}, {"pps_fee_rate": 1}, {"pps_fee_rate": None}):
+            with self.subTest(bridge=bridge), self.assertRaises(c.SourceError):
+                c.parse_pfpool_mode({**PF_MODE, "bridge": {**PF_MODE["bridge"], **bridge}}, WALLET)
+        coins, fee = c.pfpool_coins({"yieldPerHashDay": 2e-14, "fee": .03}, 300e12)
+        self.assertAlmostEqual(coins, 5.82)
+        self.assertEqual(fee, 3)
+
+    def test_balance_splits_maturing_income_from_the_payable_balance(self):
+        result = c.parse_pfpool_balance(pf_balance(), WALLET)
+        self.assertEqual(result["poolUnconfirmed"], .5)
+        self.assertAlmostEqual(result["poolConfirmed"], .25 + .5e-8)
+        self.assertAlmostEqual(result["poolBalance"], .75 + .5e-8)
+        self.assertNotIn("payoutThreshold", result)
+        empty = c.parse_pfpool_balance(pf_balance(immature_q64="0", remainder_q64="0", balance_atomic="0"), WALLET)
+        self.assertEqual(empty["poolBalance"], 0)
+        for override in ({"address": SHORT}, {"atomic_units_per_coin": "65536"}, {"immature_q64": "-1"},
+                         {"balance_atomic": "0.5"}, {"balance_atomic": 25000000}, {"remainder_q64": None}):
+            with self.subTest(override=override), self.assertRaises(c.SourceError):
+                c.parse_pfpool_balance(pf_balance(**override), WALLET)
+
+    def test_payouts_keep_pool_status_newest_first_with_all_time_total(self):
+        rows = [pf_payout(index) for index in range(7)]
+        rows[6].update(status="submitted")
+        rows[5].update(status="needs_review", tx_hash="https://bad.example")
+        rows[4].update(status="onchain_failed")
+        result = c.parse_pfpool_payouts(pf_ledger(rows, total=40), WALLET)
+        self.assertEqual(result["payoutCount"], 40)
+        self.assertEqual(result["totalPaid"], 12.3456789)
+        self.assertEqual([row["status"] for row in result["payouts"]], ["Sent", "Needs review", "Failed", "Paid", "Paid"])
+        self.assertEqual(result["payouts"][0]["amount"], 1.00000006)
+        self.assertEqual(result["payouts"][0]["txid"], "%064x" % 6)
+        self.assertIsNone(result["payouts"][1]["txid"])
+        self.assertEqual(result["payouts"][0]["date"], c.timestamp("2026-10-26T12:00:00+08:00"))
+        self.assertEqual(len({row["id"] for row in result["payouts"]}), 5)
+        self.assertNotIn("prl1", json.dumps(result))
+        self.assertEqual(c.parse_pfpool_payouts({**pf_ledger([]), "entries": None}, WALLET),
+                         {"payouts": [], "payoutCount": 0, "totalPaid": 12.3456789})
+        self.assertEqual(c.parse_pfpool_payouts(pf_ledger([pf_payout(1, status="new")]), WALLET)["payouts"][0]["status"], "Unknown")
+
+    def test_missing_ledger_never_means_no_payouts(self):
+        for data in ({}, pf_ledger([], total=3), {**pf_ledger([], total=1), "entries": None}, pf_ledger(total=2),
+                     pf_ledger(paid=None), pf_ledger(paid="-1"), pf_ledger([pf_payout(1, entry_type="credit")]),
+                     pf_ledger([pf_payout(1, to_address="prl1yyyyyy...yyyyyyyy")]),
+                     pf_ledger([pf_payout(1, amount_atomic="1.5")]), pf_ledger([pf_payout(1, event_time="soon")]),
+                     {**pf_ledger(), "miner_address": "prl1yyyyyy...yyyyyyyy"}):
+            with self.subTest(data=str(data)[:90]), self.assertRaises(c.SourceError):
+                c.parse_pfpool_payouts(data, WALLET)
+
+    def test_selected_average_drives_headline_and_pps_projection(self):
+        for window, expected in ((None, 300e12), ("1h", 330e12), ("8h", 320e12), ("24h", 310e12), ("7d", 300e12)):
+            requested = []
+            with self.subTest(window=window), tempfile.TemporaryDirectory() as root, \
+                    patch.object(c.time, "time", return_value=NOW + 1860), \
+                    patch.object(c, "request_json", side_effect=pf_router(requested=requested)):
+                config = {"walletAddress": WALLET, "workerName": "rtx4090"}
+                if window is not None:
+                    config["averageWindow"] = window
+                result = c.fetch_pearl(config, Path(root))
+                for path in Path(root).glob("*.json"):
+                    self.assertNotIn(WALLET, path.read_text())
+                    self.assertNotIn("rtx4090", path.read_text())
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn("error", result)
+            pearl = result["pearl"]
+            self.assertEqual((pearl["pool"], pearl["averageWindow"]), ("pfpool", window or "7d"))
+            self.assertEqual(pearl["hashrate"], expected)
+            self.assertEqual((pearl["hashrate1h"], pearl["hashrate7d"]), (330e12, 300e12))
+            self.assertAlmostEqual(pearl["coinsPerDay"], expected * 2e-14 * .97)
+            self.assertEqual(pearl["poolFeePercent"], 3)
+            self.assertEqual((pearl["poolUnconfirmed"], pearl["payoutCount"], pearl["walletBalance"]), (.5, 7, 7))
+            self.assertEqual(pearl["totalPaid"], 12.3456789)
+            self.assertTrue(all(url.startswith("https://pearlfortune.org/api/v1/") for url in requested))
+            self.assertEqual(len(requested), 7)
+
+    def test_kryptex_averages_are_not_offered_on_pf_pool_and_unknown_pools_are_rejected(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json") as request:
+            for config in ({"walletAddress": WALLET, "averageWindow": "30m"}, {**KRYPTEX, "averageWindow": "8h"},
+                           {"walletAddress": WALLET, "pool": "other"}):
+                with self.subTest(config=config), self.assertRaises(c.SourceError):
+                    c.fetch_pearl(config, Path(root))
+            request.assert_not_called()
+
+    def test_pplns_mode_keeps_hashrate_without_pps_projections(self):
+        mode = {**PF_MODE, "bridge": {**PF_MODE["bridge"], "payment_mode": "pplns"}}
+        with tempfile.TemporaryDirectory() as root, patch.object(c.time, "time", return_value=NOW + 1860), \
+                patch.object(c, "request_json", side_effect=pf_router(mode=mode)):
+            result = c.fetch_pearl({"walletAddress": WALLET, "averageWindow": "1h"}, Path(root))
+        self.assertEqual(result["pearl"]["hashrate"], 330e12)
+        self.assertNotIn("coinsPerDay", result["pearl"])
+        self.assertIn("PPS payment mode", result["error"])
+
+    def test_unavailable_week_only_flags_a_weekly_selection(self):
+        stale = pf_history(end=NOW - 3600)
+        for window in ("1h", "7d"):
+            with self.subTest(window=window), tempfile.TemporaryDirectory() as root, \
+                    patch.object(c.time, "time", return_value=NOW + 1860), \
+                    patch.object(c, "request_json", side_effect=pf_router(history=stale)):
+                result = c.fetch_pearl({"walletAddress": WALLET, "averageWindow": window}, Path(root))
+            self.assertEqual(result["pearl"]["hashrate1h"], 330e12)
+            self.assertNotIn("hashrate7d", result["pearl"])
+            if window == "7d":
+                self.assertEqual(result["status"], "partial")
+                self.assertNotIn("hashrate", result["pearl"])
+            else:
+                self.assertNotIn("error", result)
+
+    def test_pool_outage_preserves_price_and_wallet(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=c.SourceError("Down.")):
+            result = c.fetch_pearl({"walletAddress": WALLET}, Path(root))
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual((result["pearl"]["priceUSD"], result["pearl"]["walletBalance"]), (1.5, 7))
+        for key in ("hashrate", "poolBalance", "payouts", "coinsPerDay"):
+            self.assertNotIn(key, result["pearl"])
+
+    def test_unknown_address_backoff_and_shared_cache_for_every_worker(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json", side_effect=c.HTTPFailure(400)) as request:
+            for _ in range(2):
+                with self.assertRaisesRegex(c.SourceError, "does not recognize"):
+                    c.pfpool_hashrate({"walletAddress": WALLET}, Path(root))
+            # One attempt sends the averages and connections requests together; the retry waits.
+            self.assertEqual(request.call_count, 2)
+        with tempfile.TemporaryDirectory() as root, patch.object(c.time, "time", return_value=NOW + 1860), \
+                patch.object(c, "request_json", side_effect=pf_router()) as request:
+            c.pfpool_hashrate({"walletAddress": WALLET, "workerName": "one"}, Path(root))
+            c.pfpool_hashrate({"walletAddress": WALLET, "workerName": "two"}, Path(root))
+            self.assertEqual(request.call_count, 2)
+            self.assertIn("/miners/" + WALLET + "/connections", request.call_args.args[0])
+            # The fixture answers for WALLET, so another address fails its identity check.
+            with self.assertRaises(c.SourceError):
+                c.pfpool_hashrate({"walletAddress": "prl1" + "y" * 59}, Path(root))
+            self.assertEqual(request.call_count, 4)
+
+    def test_paired_requests_run_side_by_side_and_invalid_addresses_make_none(self):
+        # Requests made one after another would never meet at the barrier.
+        barrier, router = threading.Barrier(2, timeout=5), pf_router()
+
+        def respond(url):
+            barrier.wait()
+            return router(url)
+        with tempfile.TemporaryDirectory() as root, patch.object(c.time, "time", return_value=NOW + 1860), \
+                patch.object(c, "request_json", side_effect=respond):
+            self.assertEqual(c.pfpool_hashrate({"walletAddress": WALLET}, Path(root))["onlineWorkers"], 1)
+            self.assertTrue(c.pfpool_yield({"walletAddress": WALLET}, Path(root))["supportsPPS"])
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "request_json") as request:
+            for loader in (c.pfpool_hashrate, c.pfpool_history, c.pfpool_yield, c.pfpool_balance, c.pfpool_payouts):
+                with self.subTest(loader=loader.__name__), self.assertRaises(c.SourceError):
+                    loader({"walletAddress": "prl1/../../"}, Path(root))
+            request.assert_not_called()
+
+    def test_pool_link_follows_the_selection_and_switching_pools_refreshes(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(c, "exchange_rate", return_value=None), \
+                patch.object(c, "fetch_pearl", return_value={"pearl": {}}) as fetch:
+            result = c.collect("pearl", config={"walletAddress": WALLET}, cache_dir=root)
+            self.assertEqual((result["url"], result["source"]),
+                             ("https://pearlfortune.org/", "PF Pool · Pearl explorer · CoinGecko"))
+            fetch.side_effect = c.SourceError("Unavailable.")
+            result = c.collect("pearl", config=dict(KRYPTEX), cache_dir=root)
+            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(result["url"], "https://pool.kryptex.com/prl")
+            self.assertTrue(result["source"].startswith("Kryptex"))
+
+    def test_requests_to_pf_pool_are_allowed_without_credentials(self):
+        opener = MagicMock()
+        opener.open.return_value.__enter__.return_value.read.return_value = b'{"data": {}}'
+        with patch.object(c.urllib.request, "build_opener", return_value=opener):
+            self.assertEqual(c.request_json("https://pearlfortune.org/api/v1/config"), {"data": {}})
+            with self.assertRaises(c.SourceError):
+                c.request_json("https://pearlfortune.org.example.com/api/v1/config")
+        self.assertFalse(opener.open.call_args[0][0].has_header("Authorization"))
 
 
 class PowerTests(unittest.TestCase):

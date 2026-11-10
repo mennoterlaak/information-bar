@@ -6,17 +6,41 @@ struct PearlSettingsSections: View {
   @State private var message: String?
   private var provider: Provider { store.providers["pearl"] ?? .placeholder("pearl") }
 
+  private var poolNote: String {
+    switch draft.pool {
+    case .pfPool:
+      return "Reads your accepted hashrate directly from PF Pool, for all workers of this address. Hours before you started mining there count as zero."
+    case .kryptex:
+      return "Reads your accepted hashrate directly from Kryptex. Leave Worker empty to include all workers for this wallet."
+    }
+  }
+
+  private var payoutNote: String {
+    let source = "Wallet balance shows confirmed PRL at the saved mining address from Pearl's public explorer. Unpaid rewards and payout history come from \(draft.pool.title)"
+    switch draft.pool {
+    case .pfPool: return source + ". PF Pool does not publish a payout threshold."
+    case .kryptex: return source + " and cover the whole wallet, even when a single worker is selected."
+    }
+  }
+
   var body: some View {
-    Section("Kryptex pool") {
+    Section("Mining pool") {
+      Picker("Pool", selection: $draft.pool) {
+        ForEach(PearlPool.allCases, id: \.self) { pool in
+          Text(pool.title).tag(pool)
+        }
+      }
       TextField(
         "PRL wallet address", text: $draft.walletAddress, prompt: Text("prl1…"))
-      TextField("Worker", text: $draft.workerName, prompt: Text("All workers"))
+      if draft.pool == .kryptex {
+        TextField("Worker", text: $draft.workerName, prompt: Text("All workers"))
+      }
       Picker("Hashrate average", selection: $draft.averageWindow) {
-        ForEach(PearlAverageWindow.allCases, id: \.self) { window in
+        ForEach(draft.pool.windows, id: \.self) { window in
           Text(window.title).tag(window)
         }
       }
-      Text("Reads your accepted hashrate directly from Kryptex. Leave Worker empty to include all workers for this wallet.")
+      Text(poolNote)
         .font(.callout).foregroundStyle(.secondary)
       Text("The selected average drives the menu bar and projections. Seven days smooths short-term share fluctuations using pool history, including recorded downtime.")
         .font(.callout).foregroundStyle(.secondary)
@@ -45,15 +69,18 @@ struct PearlSettingsSections: View {
     .onAppear {
       draft = store.preferences.pearl
     }
+    .onChange(of: draft.pool) { _, pool in
+      draft.averageWindow = draft.averageWindow.available(in: pool)
+    }
     Section("Wallet & payouts") {
-      Text("Wallet balance shows confirmed PRL at the saved mining address from Pearl's public explorer. Unpaid rewards and payout history come from Kryptex and cover the whole wallet, even when a single worker is selected.")
+      Text(payoutNote)
         .font(.callout).foregroundStyle(.secondary)
       Text("Use Add item above to show Wallet balance, Unpaid pool rewards or Total paid by pool in the menu bar.")
         .font(.caption).foregroundStyle(.secondary)
     }
     Section("Profit projections") {
       Text(
-        "Hourly, daily, weekly and 30-day monthly estimates use your selected hashrate average, the current PRL price and Kryptex PPS+ yield after the pool fee. Accepted hashrate already reflects time spent mining developer fees. Profit also deducts the electricity assigned to Pearl in Power Settings."
+        "Hourly, daily, weekly and 30-day monthly estimates use your selected hashrate average, the current PRL price and \(draft.pool.title) \(draft.pool.scheme) yield after the pool fee. Accepted hashrate already reflects time spent mining developer fees. Profit also deducts the electricity assigned to Pearl in Power Settings."
       )
       .font(.callout).foregroundStyle(.secondary)
       Text(

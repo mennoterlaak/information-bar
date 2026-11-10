@@ -58,17 +58,20 @@ enum DemoData {
     ])
     result["pearl"] = decode([
       "id": "pearl", "name": "Pearl", "status": "ok", "updatedAt": now,
-      "url": "https://pool.kryptex.com/prl", "rates": ["EUR": 0.86],
+      "url": "https://pearlfortune.org/", "rates": ["EUR": 0.86],
       "pearl": [
-        "priceUSD": 1.11, "priceUpdatedAt": now, "hashrate": 312.8e12, "averageWindow": "7d",
-        "hashrate30m": 321.6e12, "hashrate3h": 328.6e12, "hashrate24h": 316.4e12,
-        "hashrate7d": 312.8e12, "historyUpdatedAt": now - 600,
-        "onlineWorkers": 1, "workerCount": 1, "coinsPerDay": 6.47, "poolFeePercent": 2,
-        "walletBalance": 7.63170958, "poolBalance": 2.70568857,
-        "poolConfirmed": 0.78614168, "poolUnconfirmed": 1.91954689,
-        "payoutThreshold": 1, "totalPaid": 8.63170958, "payoutCount": 7,
+        "pool": "pfpool", "priceUSD": 1.11, "priceUpdatedAt": now, "hashrate": 312.8e12,
+        "averageWindow": "7d", "hashrate1h": 321.6e12, "hashrate8h": 328.6e12,
+        "hashrate24h": 316.4e12, "hashrate7d": 312.8e12, "historyUpdatedAt": now - 600,
+        "onlineWorkers": 1, "workerCount": 1, "coinsPerDay": 4.18, "poolFeePercent": 3,
+        "walletBalance": 7.63170958, "poolBalance": 1.10568857,
+        "poolConfirmed": 0.18614168, "poolUnconfirmed": 0.91954689,
+        "totalPaid": 8.63170958, "payoutCount": 7,
         "payouts": [
-          ["id": "demo-pending", "date": now - 60, "amount": 1.02, "status": "Pending"],
+          [
+            "id": "demo-sent", "date": now - 60, "amount": 1.02, "status": "Sent",
+            "txid": String(repeating: "2", count: 64),
+          ],
           [
             "id": "demo-paid", "date": now - 4 * 3600, "amount": 1.09738591, "status": "Paid",
             "txid": String(repeating: "0", count: 64),

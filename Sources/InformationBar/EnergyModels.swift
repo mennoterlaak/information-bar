@@ -1,12 +1,15 @@
 import Foundation
 
 enum PearlAverageWindow: String, Codable, CaseIterable {
-  case thirtyMinutes = "30m", threeHours = "3h", day = "24h", week = "7d"
+  case thirtyMinutes = "30m", hour = "1h", threeHours = "3h", eightHours = "8h", day = "24h",
+    week = "7d"
 
   var title: String {
     switch self {
     case .thirtyMinutes: return "30 minutes"
+    case .hour: return "1 hour"
     case .threeHours: return "3 hours"
+    case .eightHours: return "8 hours"
     case .day: return "24 hours"
     case .week: return "7 days"
     }
@@ -15,35 +18,79 @@ enum PearlAverageWindow: String, Codable, CaseIterable {
   var averageDescription: String {
     switch self {
     case .thirtyMinutes: return "30-minute average"
+    case .hour: return "1-hour average"
     case .threeHours: return "3-hour average"
+    case .eightHours: return "8-hour average"
     case .day: return "24-hour average"
     case .week: return "7-day average"
+    }
+  }
+
+  /// This window, or the one in the same position when the pool reports other averages.
+  func available(in pool: PearlPool) -> PearlAverageWindow {
+    if pool.windows.contains(self) { return self }
+    let position = PearlPool.allCases.lazy.compactMap { $0.windows.firstIndex(of: self) }.first
+    return position.map { pool.windows[$0] } ?? .week
+  }
+}
+
+enum PearlPool: String, Codable, CaseIterable {
+  case pfPool = "pfpool", kryptex
+
+  var title: String {
+    switch self {
+    case .pfPool: return "PF Pool"
+    case .kryptex: return "Kryptex"
+    }
+  }
+
+  /// The title as a pool's name, as in "Open Kryptex pool"; PF Pool already says so.
+  var poolName: String { self == .pfPool ? title : title + " pool" }
+
+  /// The accepted-hashrate averages the pool reports, shortest first.
+  var windows: [PearlAverageWindow] {
+    switch self {
+    case .pfPool: return [.hour, .eightHours, .day, .week]
+    case .kryptex: return [.thirtyMinutes, .threeHours, .day, .week]
+    }
+  }
+
+  /// Payment scheme the profit projections rely on.
+  var scheme: String {
+    switch self {
+    case .pfPool: return "PPS"
+    case .kryptex: return "PPS+"
     }
   }
 }
 
 struct PearlPreferences: Codable, Equatable {
+  var pool = PearlPool.pfPool
   var walletAddress = ""
-  /// Empty includes all workers mining to this wallet.
+  /// Empty includes all workers mining to this wallet. PF Pool only reports whole addresses.
   var workerName = ""
   var averageWindow = PearlAverageWindow.week
 
-  enum CodingKeys: String, CodingKey { case walletAddress, workerName, averageWindow }
+  enum CodingKeys: String, CodingKey { case pool, walletAddress, workerName, averageWindow }
 
   init() {}
 
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     // Ignore retired local API settings without resetting the user's other preferences.
+    // Configurations from before the pool choice move to PF Pool.
+    pool = try values.decodeIfPresent(String.self, forKey: .pool).flatMap(PearlPool.init(rawValue:))
+      ?? .pfPool
     walletAddress = try values.decodeIfPresent(String.self, forKey: .walletAddress) ?? ""
     workerName = try values.decodeIfPresent(String.self, forKey: .workerName) ?? ""
     let savedWindow = try values.decodeIfPresent(String.self, forKey: .averageWindow)
-    averageWindow = savedWindow.flatMap(PearlAverageWindow.init(rawValue:)) ?? .week
+    averageWindow = (savedWindow.flatMap(PearlAverageWindow.init(rawValue:)) ?? .week).available(
+      in: pool)
   }
 
   var validationError: String? {
     guard walletAddress.range(of: "^prl1[0-9a-z]{20,120}$", options: .regularExpression) != nil else {
-      return "Enter the public PRL wallet address used for mining on Kryptex."
+      return "Enter the public PRL wallet address used for mining on \(pool.title)."
     }
     return nil
   }
@@ -131,12 +178,15 @@ struct PowerReading: Decodable, Identifiable {
 }
 
 struct PearlMetrics: Decodable {
+  let pool: PearlPool?
   let priceUSD: Double?
   let priceUpdatedAt: Double?
   let hashrate: Double?
   let averageWindow: PearlAverageWindow?
   let hashrate30m: Double?
+  let hashrate1h: Double?
   let hashrate3h: Double?
+  let hashrate8h: Double?
   let hashrate24h: Double?
   let hashrate7d: Double?
   let historyUpdatedAt: Double?
@@ -153,9 +203,21 @@ struct PearlMetrics: Decodable {
   let payoutCount: Int?
   let payouts: [PearlPayout]?
 
-  // Cached metrics from older app versions always used the 30-minute rate.
+  // Cached metrics from older app versions came from Kryptex and always used the 30-minute rate.
+  var source: PearlPool { pool ?? .kryptex }
   var effectiveAverageWindow: PearlAverageWindow { averageWindow ?? .thirtyMinutes }
   var shortHashrate: Double? { hashrate30m ?? (averageWindow == nil ? hashrate : nil) }
+
+  func hashrate(for window: PearlAverageWindow) -> Double? {
+    switch window {
+    case .thirtyMinutes: return shortHashrate
+    case .hour: return hashrate1h
+    case .threeHours: return hashrate3h
+    case .eightHours: return hashrate8h
+    case .day: return hashrate24h
+    case .week: return hashrate7d
+    }
+  }
 }
 
 struct PearlPayout: Decodable, Identifiable {
