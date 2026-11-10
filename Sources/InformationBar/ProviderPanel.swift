@@ -195,6 +195,8 @@ struct ProviderPanel: View {
   var options: ProviderPreferences { store.preferences.provider(category) }
   private var id: String { category.rawValue }
   private var busy: Bool { store.refreshing.contains(id) }
+  /// The pool Pearl readings came from, or the configured pool until they arrive.
+  private var pearlPool: PearlPool { provider.pearl?.source ?? store.preferences.pearl.pool }
   var body: some View {
     if let maxHeight {
       ScrollView { content }.frame(width: MenuMetrics.width, height: maxHeight)
@@ -212,7 +214,7 @@ struct ProviderPanel: View {
           provider: provider, options: options, power: store.powerContext,
           style: store.preferences.gaugeStyle)
       } else if category == .pearl {
-        PearlMenu(provider: provider, options: options, power: store.powerContext)
+        PearlMenu(provider: provider, options: options, power: store.powerContext, pool: pearlPool)
       } else if category == .kraken {
         KrakenMenu(provider: provider)
       } else if category == .power {
@@ -245,7 +247,7 @@ struct ProviderPanel: View {
   private var actionTitle: String {
     switch category {
     case .vast: return "Open Vast.ai console"
-    case .pearl: return "Open Kryptex pool"
+    case .pearl: return "Open \(pearlPool.poolName)"
     case .kraken: return "Open Kraken portfolio"
     case .power: return "HomeWizard setup guide"
     case .codex, .claude, .cursor: return "Open \(category.name) usage page"
@@ -331,9 +333,12 @@ struct ProviderPanel: View {
     case .pearl:
       guard provider.isFresh, let online = provider.pearl?.onlineWorkers,
         let count = provider.pearl?.workerCount
-      else { return provider.pearl == nil ? nil : "Kryptex pool" }
+      else { return provider.pearl == nil ? nil : pearlPool.poolName }
       let window = provider.pearl?.effectiveAverageWindow.rawValue ?? "7d"
-      return "Kryptex · \(window) avg · \(online)/\(count) " + (count == 1 ? "worker" : "workers") + " online"
+      // PF Pool only lists connected workers.
+      let workers = count == 0
+        ? "no workers" : "\(online)/\(count) " + (count == 1 ? "worker" : "workers")
+      return "\(pearlPool.title) · \(window) avg · \(workers) online"
     case .kraken:
       guard let kraken = provider.kraken else { return nil }
       return kraken.openMargin == nil ? "Spot portfolio" : "Spot and margin"

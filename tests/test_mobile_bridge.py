@@ -55,6 +55,23 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(meter["serial"], "")
             self.assertEqual(result["preferences"]["power"]["pricePerKWh"], 0.32)
 
+    def test_pearl_pool_and_its_averages_reach_the_phone_as_known_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pearl = {"pool": "pfpool", "averageWindow": "8h", "hashrate1h": 330.5, "hashrate8h": 320.5}
+            Path(directory, "pearl.json").write_text(json.dumps({"id": "pearl", "status": "ok", "pearl": pearl}))
+            raw = {"pearl": {"pool": "kryptex", "walletAddress": "never-export", "averageWindow": "3h"}}
+            result = bridge.snapshot(directory, raw, now=500)
+            exported = next(item for item in result["providers"] if item["id"] == "pearl")["pearl"]
+            self.assertEqual(exported, pearl)
+            self.assertEqual(result["preferences"]["pearl"],
+                             {"pool": "kryptex", "walletAddress": "", "workerName": "", "averageWindow": "3h"})
+            Path(directory, "pearl.json").write_text(json.dumps(
+                {"id": "pearl", "status": "ok", "pearl": {"pool": "other", "averageWindow": "2h"}}))
+            result = bridge.snapshot(directory, {"pearl": {"pool": "other"}}, now=500)
+            exported = next(item for item in result["providers"] if item["id"] == "pearl")["pearl"]
+            self.assertEqual(exported, {"pool": "pfpool", "averageWindow": "7d"})
+            self.assertEqual(result["preferences"]["pearl"]["pool"], "pfpool")
+
     def test_disabled_and_unrelated_cache_files_are_not_read(self):
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "credentials.json").write_text('{"token":"never-export"}')

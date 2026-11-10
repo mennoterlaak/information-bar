@@ -113,11 +113,13 @@ MACHINE = {"id": str, "name": str, "gpu": str, "status": str,
               "reliability", "utilization")}, "verification": str, "cpu": str, "listed": bool}
 PAYOUT = {"id": str, "date": float, "amount": float, "status": str, "txid": str}
 PEARL = {key: float for key in (
-    "priceUSD", "priceUpdatedAt", "hashrate", "hashrate30m", "hashrate3h", "hashrate24h",
-    "hashrate7d", "historyUpdatedAt", "coinsPerDay", "poolFeePercent", "walletBalance",
-    "poolBalance", "poolConfirmed", "poolUnconfirmed", "payoutThreshold", "totalPaid")}
-PEARL.update({"averageWindow": str, "onlineWorkers": int, "workerCount": int,
+    "priceUSD", "priceUpdatedAt", "hashrate", "hashrate30m", "hashrate1h", "hashrate3h",
+    "hashrate8h", "hashrate24h", "hashrate7d", "historyUpdatedAt", "coinsPerDay", "poolFeePercent",
+    "walletBalance", "poolBalance", "poolConfirmed", "poolUnconfirmed", "payoutThreshold", "totalPaid")}
+PEARL.update({"pool": str, "averageWindow": str, "onlineWorkers": int, "workerCount": int,
               "payoutCount": int, "payouts": [PAYOUT]})
+PEARL_POOLS = ("pfpool", "kryptex")
+PEARL_WINDOWS = ("30m", "1h", "3h", "8h", "24h", "7d")
 POWER = {"id": str, "name": str, "watts": float, "status": str, "updatedAt": float}
 LEG = {"symbol": str, "invert": bool}
 ASSET = {"symbol": str, "amount": float, "earn": float, "decimals": int, "fiat": bool,
@@ -203,8 +205,8 @@ def safe_preferences(raw):
         # Menu composition is Mac-specific; omission uses the shared model's defaults.
         result["providers"][identifier] = exported
     pearl = object_value(raw.get("pearl"))
-    result["pearl"] = {"walletAddress": "", "workerName": "",
-                       "averageWindow": choice(pearl.get("averageWindow"), ("30m", "3h", "24h", "7d"), "7d")}
+    result["pearl"] = {"pool": choice(pearl.get("pool"), PEARL_POOLS, "pfpool"), "walletAddress": "", "workerName": "",
+                       "averageWindow": choice(pearl.get("averageWindow"), PEARL_WINDOWS, "7d")}
     power = object_value(raw.get("power"))
     cleaned_power = {"currency": choice(power.get("currency"), ("USD", "EUR"), "USD"), "devices": []}
     price = power.get("pricePerKWh")
@@ -246,7 +248,9 @@ def snapshot(cache_dir=CACHE_DIR, preferences=None, now=None):
             item["status"] = choice(item.get("status"),
                                     ("ok", "partial", "stale", "disconnected", "error", "loading"), "error")
             if item.get("pearl") and "averageWindow" in item["pearl"]:
-                item["pearl"]["averageWindow"] = choice(item["pearl"]["averageWindow"], ("30m", "3h", "24h", "7d"), "7d")
+                item["pearl"]["averageWindow"] = choice(item["pearl"]["averageWindow"], PEARL_WINDOWS, "7d")
+            if item.get("pearl") and "pool" in item["pearl"]:
+                item["pearl"]["pool"] = choice(item["pearl"]["pool"], PEARL_POOLS, "pfpool")
             providers.append(item)
         except (OSError, BridgeError, ValueError, TypeError, OverflowError):
             providers.append(placeholder)

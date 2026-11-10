@@ -37,19 +37,24 @@ import urllib.request
 
 APP_SUPPORT = Path.home() / "Library/Application Support/Information Bar"
 NAMES = {"codex": "ChatGPT", "claude": "Claude", "cursor": "Cursor", "vast": "Vast.ai", "pearl": "Pearl", "power": "Power", "kraken": "Kraken"}
+# Pearl mining pools and the hashrate averages each reports. A missing pool means PF Pool.
+PEARL_POOLS = {
+    "pfpool": {"name": "PF Pool", "url": "https://pearlfortune.org/", "windows": ("1h", "8h", "24h", "7d")},
+    "kryptex": {"name": "Kryptex", "url": "https://pool.kryptex.com/prl", "windows": ("30m", "3h", "24h", "7d")},
+}
 LINKS = {
     "codex": "https://chatgpt.com/codex/settings/usage",
     "claude": "https://claude.ai/settings/usage",
     "cursor": "https://cursor.com/dashboard?tab=usage",
     "vast": "https://cloud.vast.ai/host/machines/",
-    "pearl": "https://pool.kryptex.com/prl",
+    "pearl": PEARL_POOLS["pfpool"]["url"],
     "power": "https://api-documentation.homewizard.com/docs/getting-started/",
     "kraken": "https://pro.kraken.com/app/portfolio",
 }
 TTL = {"codex": 60, "claude": 300, "cursor": 60, "vast": 60, "pearl": 60, "power": 60, "kraken": 60}
 # The app passes its bundle version; "dev" when run directly.
 VERSION = os.environ.get("INFORMATION_BAR_VERSION", "dev")
-SOURCES = {"codex": "Codex app server", "claude": "Claude account usage", "cursor": "Cursor account usage", "vast": "Vast.ai host API", "pearl": "Kryptex · Pearl explorer · CoinGecko", "power": "HomeWizard local API", "kraken": "Kraken REST API"}
+SOURCES = {"codex": "Codex app server", "claude": "Claude account usage", "cursor": "Cursor account usage", "vast": "Vast.ai host API", "pearl": "PF Pool · Pearl explorer · CoinGecko", "power": "HomeWizard local API", "kraken": "Kraken REST API"}
 # European Central Bank reference rates, no credential involved.
 RATES_URL = "https://api.frankfurter.dev/v1/latest"
 
@@ -90,7 +95,7 @@ def retry_after_seconds(header):
 
 def request_json(url, token=None, *, body=None, headers=None, form=None, response_type=dict):
     parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in {"api.anthropic.com", "api2.cursor.sh", "console.vast.ai", "api.frankfurter.dev", "pool.kryptex.com", "api.coingecko.com", "blockbook.pearlresearch.ai", "api.kraken.com"}:
+    if parsed.scheme != "https" or parsed.hostname not in {"api.anthropic.com", "api2.cursor.sh", "console.vast.ai", "api.frankfurter.dev", "pool.kryptex.com", "pearlfortune.org", "api.coingecko.com", "blockbook.pearlresearch.ai", "api.kraken.com"}:
         raise SourceError("Unrecognized provider endpoint.")
     hdr = {"Accept": "application/json", "User-Agent": "InformationBar/" + VERSION}
     if token:
@@ -1029,28 +1034,269 @@ def pearl_wallet(config, root):
     return {"walletBalance": result["walletBalance"]}
 
 
+def pfpool_miner(wallet, path):
+    """PF Pool wraps responses in {"data": ...} and rejects unknown addresses with HTTP 400."""
+    try:
+        data = request_json("https://pearlfortune.org/api/v1/miners/" + urllib.parse.quote(wallet, safe="") + path)
+    except HTTPFailure as exc:
+        if exc.status == 400:
+            raise SourceError("PF Pool does not recognize this Pearl address.", exc.retry_after) from None
+        raise
+    if not isinstance(data.get("data"), dict):
+        raise SourceError("PF Pool returned an unrecognized response.")
+    return data["data"]
+
+
+def pfpool_address(reported, wallet):
+    """PF Pool shortens most addresses it echoes, as in prl1pr2shu...vsh239dk."""
+    if not isinstance(reported, str):
+        return False
+    head, separator, tail = reported.partition("...")
+    if not separator:
+        return reported == wallet
+    return len(head) >= 8 and len(tail) >= 6 and wallet.startswith(head) and wallet.endswith(tail)
+
+
+def pfpool_together(*loaders):
+    """Run requests side by side, so a slow connection costs one request's time, not several."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(loaders)) as executor:
+        jobs = [executor.submit(loader) for loader in loaders]
+        return [job.result() for job in jobs]
+
+
+def pfpool_wallet_source(config, root, source, ttl, load):
+    """Normalized metrics per wallet; PF Pool has no per-worker averages, so the worker is not part of the key."""
+    wallet = pearl_wallet_address(config)
+    key = hashlib.sha256(wallet.encode()).hexdigest()
+    result = pearl_source(root / ("pearl-pfpool-" + source + "-" + key + ".json"), ttl, lambda: load(wallet))
+    return {key: value for key, value in result.items() if key != "checkedAt"}
+
+
+def parse_pfpool_hashrate(shares, connections, wallet):
+    """PF Pool's rolling averages of accepted work in H/s, for every worker of the address."""
+    rolling, workers = shares.get("rolling_hashrates"), connections.get("workers")
+    if workers is None:
+        workers = []  # No connected sessions.
+    if (not pfpool_address(shares.get("miner_address"), wallet) or not pfpool_address(connections.get("address"), wallet)
+            or connections.get("configured") is not True or not isinstance(rolling, list)
+            or not all(isinstance(row, dict) and isinstance(row.get("share_statistics"), dict) for row in rolling)
+            or not isinstance(workers, list)
+            or not all(isinstance(row, dict) and isinstance(row.get("stale"), bool) for row in workers)):
+        raise SourceError("PF Pool returned unrecognized hashrate data.")
+    rates = {number(row.get("hours")): (number(row.get("hashrate")), timestamp(row["share_statistics"].get("to")))
+             for row in rolling}
+
+    def average(hours):
+        rate = rates.get(hours, (None, None))[0]
+        return rate if rate is not None and rate >= 0 else None
+
+    current, updated = average(1), rates.get(1, (None, None))[1]
+    if current is None or updated is None:
+        raise SourceError("PF Pool has not reported a valid 1-hour hashrate yet.")
+    if not -60 <= time.time() - updated < 1800:
+        raise SourceError("PF Pool's hashrate is stale.")
+    online = sum(not row["stale"] for row in workers)
+    # As with offline Kryptex workers, the current rate is zero once no worker is connected.
+    return {"hashrate1h": current if online else 0.0, "hashrate8h": average(8), "hashrate24h": average(24),
+            "onlineWorkers": online, "workerCount": len(workers)}
+
+
+def pfpool_hashrate(config, root):
+    def load(wallet):
+        shares, connections = pfpool_together(lambda: pfpool_miner(wallet, "/hourly-shares?hours=24"),
+                                              lambda: pfpool_miner(wallet, "/connections"))
+        return parse_pfpool_hashrate(shares, connections, wallet)
+    return pfpool_wallet_source(config, root, "hashrate", 60, load)
+
+
+def parse_pfpool_history(data, wallet):
+    """Time-weight the hourly accepted-work rates across the seven days ending at the latest hour."""
+    window = 7 * 86400
+    rows = data.get("series")
+    if not pfpool_address(data.get("miner_address"), wallet) or not isinstance(rows, list) or len(rows) < 2:
+        raise SourceError("PF Pool has not reported seven days of hashrate history yet.")
+    hours = []
+    for row in rows:
+        stats = row.get("share_statistics") if isinstance(row, dict) else None
+        start, end, rate, observed = ((timestamp(stats.get("from")), timestamp(stats.get("to")),
+                                       number(stats.get("effective_hashrate")), number(stats.get("observed_ms")))
+                                      if isinstance(stats, dict) else (None,) * 4)
+        if None in (start, end, rate, observed) or end < start or rate < 0 or observed < 0:
+            raise SourceError("PF Pool returned invalid hashrate history.")
+        if end > start:  # The hour that has only just begun covers no time yet.
+            hours.append((start, end, rate, observed))
+    if not hours:
+        raise SourceError("PF Pool has not reported seven days of hashrate history yet.")
+    hours.sort()
+    end = hours[-1][1]
+    start = end - window
+    if not -60 <= time.time() - end < 1800:
+        raise SourceError("PF Pool's seven-day hashrate history is stale.")
+    if hours[0][0] > start:
+        raise SourceError("PF Pool has not reported seven days of hashrate history yet.")
+    weighted = []
+    for (begin, finish, rate, observed), following in zip(hours, hours[1:] + [None]):
+        if following and following[0] != finish:
+            raise SourceError("PF Pool's seven-day hashrate history has missing intervals." if following[0] > finish
+                              else "PF Pool returned overlapping hashrate history.")
+        if finish <= start:
+            continue
+        # An hour the pool never observed is unknown, never downtime. Hours without
+        # shares, including those before mining started here, count as zero.
+        if observed == 0:
+            raise SourceError("PF Pool's seven-day hashrate history has missing intervals.")
+        weighted.append(rate * ((finish - max(begin, start)) / window))
+    average = math.fsum(weighted)
+    if not math.isfinite(average):
+        raise SourceError("PF Pool returned invalid hashrate history.")
+    return {"hashrate7d": average, "historyUpdatedAt": end}
+
+
+def pfpool_history(config, root):
+    result = pfpool_wallet_source(config, root, "history", 300, lambda wallet: parse_pfpool_history(
+        pfpool_miner(wallet, "/hourly-shares?hours=168"), wallet))
+    if not -60 <= time.time() - result["historyUpdatedAt"] < 1800:
+        raise SourceError("PF Pool's seven-day hashrate history is stale.")
+    return result
+
+
+def parse_pfpool_yield(data):
+    """Current theoretical PPS yield, which PF Pool reports in PRL per MH/s per day before fees."""
+    stats = data.get("pool_stats")
+    rows = stats.get("rolling_stats") if isinstance(stats, dict) else None
+    current = next((row for row in rows if isinstance(row, dict) and number(row.get("hours")) == 0), None) \
+        if isinstance(rows, list) else None
+    per_mhs = number(current.get("theoretical_yield")) if current else None
+    if data.get("chain") != "pearl" or per_mhs is None or per_mhs <= 0:
+        raise SourceError("PF Pool did not report a valid Pearl yield.")
+    return {"yieldPerHashDay": per_mhs / 1e6}
+
+
+def parse_pfpool_mode(data, wallet):
+    bridge = data.get("bridge")
+    fee = number(bridge.get("pps_fee_rate")) if isinstance(bridge, dict) else None
+    if (data.get("bridge_configured") is not True or not isinstance(bridge, dict) or bridge.get("address") != wallet
+            or bridge.get("payment_mode") not in ("pps", "pplns") or fee is None or not 0 <= fee < 1):
+        raise SourceError("PF Pool did not report this address's payment mode and fee.")
+    return {"scheme": bridge["payment_mode"], "fee": fee}
+
+
+def pfpool_yield(config, root):
+    pearl_wallet_address(config)  # An invalid address never makes a request.
+
+    def network():
+        data = request_json("https://pearlfortune.org/api/v1/summary?hours=24").get("data")
+        return parse_pfpool_yield(data if isinstance(data, dict) else {})
+
+    mode, network = pfpool_together(
+        lambda: pfpool_wallet_source(config, root, "mode", 60, lambda wallet: parse_pfpool_mode(
+            pfpool_miner(wallet, "/address-mode"), wallet)),
+        lambda: pearl_source(root / "pearl-pfpool-yield.json", 300, network))
+    return {"yieldPerHashDay": network["yieldPerHashDay"], "fee": mode["fee"], "supportsPPS": mode["scheme"] == "pps"}
+
+
+def pfpool_coins(pool, hashrate):
+    # PPS pays the theoretical yield for accepted work, minus the address's PPS fee.
+    return hashrate * pool["yieldPerHashDay"] * (1 - pool["fee"]), pool["fee"] * 100
+
+
+def pfpool_amount(value, scale=1):
+    """Integer atomic units (Q64 values are atomic units × 2^64) as PRL, or None."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,40}", value):
+        return None
+    return int(value) / scale / 100_000_000
+
+
+def parse_pfpool_balance(data, wallet):
+    immature = pfpool_amount(data.get("immature_q64"), 2 ** 64)
+    payable = pfpool_amount(data.get("balance_atomic"))
+    fraction = pfpool_amount(data.get("remainder_q64"), 2 ** 64)
+    if (data.get("address") != wallet or str(data.get("atomic_units_per_coin")) != "100000000"
+            or None in (immature, payable, fraction)):
+        raise SourceError("PF Pool did not report valid pool balances.")
+    # PPS income matures for about five hours; payable PRL is sent with the next hourly payout.
+    confirmed = payable + fraction
+    return {"poolBalance": confirmed + immature, "poolConfirmed": confirmed, "poolUnconfirmed": immature}
+
+
+def pfpool_balance(config, root):
+    return pfpool_wallet_source(config, root, "balance", 60, lambda wallet: parse_pfpool_balance(
+        pfpool_miner(wallet, "/pps?status=pending"), wallet))
+
+
+PFPOOL_PAYOUTS = {"confirmed": "Paid", "submitted": "Sent", "broadcasting": "Sending",
+                  "needs_review": "Needs review", "failed": "Failed", "onchain_failed": "Failed"}
+
+
+def parse_pfpool_payouts(data, wallet):
+    rows, count, paid = data.get("entries"), number(data.get("total")), pfpool_amount(data.get("sum_payout_amount_atomic"))
+    if rows is None and count == 0:
+        rows = []  # PF Pool returns null for an empty ledger.
+    if (not pfpool_address(data.get("miner_address"), wallet) or not isinstance(rows, list) or count is None
+            or not count.is_integer() or count < len(rows) or (count > 0 and not rows) or paid is None):
+        raise SourceError("PF Pool did not return a valid payout history.")
+    payouts = []
+    for row in rows:
+        if (not isinstance(row, dict) or row.get("entry_type") != "payout"
+                or ("to_address" in row and not pfpool_address(row["to_address"], wallet))):
+            raise SourceError("PF Pool returned unrecognized payout data.")
+        date, amount = timestamp(row.get("event_time")), pfpool_amount(row.get("amount_atomic"))
+        if date is None or date <= 0 or amount is None:
+            raise SourceError("PF Pool returned an invalid payout amount or date.")
+        txid = row.get("tx_hash")
+        txid = txid.lower() if isinstance(txid, str) and re.fullmatch(r"[0-9a-fA-F]{64}", txid) else None
+        # Submitted payouts are on-chain; PF Pool marks them confirmed after further blocks.
+        status = PFPOOL_PAYOUTS.get(str(row.get("status") or "").lower(), "Unknown")
+        normalized = {"date": date, "amount": amount, "status": status, "txid": txid}
+        normalized["id"] = hashlib.sha256(json.dumps(normalized, sort_keys=True).encode()).hexdigest()
+        payouts.append(normalized)
+    payouts.sort(key=lambda row: row["date"], reverse=True)
+    # The ledger total includes payouts still being sent and excludes failed ones.
+    return {"payouts": payouts[:5], "payoutCount": int(count), "totalPaid": paid}
+
+
+def pfpool_payouts(config, root):
+    return pfpool_wallet_source(config, root, "payouts", 60, lambda wallet: parse_pfpool_payouts(
+        pfpool_miner(wallet, "/ledger?page=1&page_size=5&entry_type=payout"), wallet))
+
+
+def pearl_pool_id(config):
+    pool = config.get("pool") or "pfpool"
+    if pool not in PEARL_POOLS:
+        raise SourceError("Choose a mining pool in Pearl Settings.")
+    return pool
+
+
 def fetch_pearl(config, root):
+    pool = pearl_pool_id(config)
+    kryptex, name = pool == "kryptex", PEARL_POOLS[pool]["name"]
     window = config.get("averageWindow", "7d")
-    fields = {"30m": "hashrate30m", "3h": "hashrate3h", "24h": "hashrate24h", "7d": "hashrate7d"}
-    if window not in fields:
+    fields = {"30m": "hashrate30m", "1h": "hashrate1h", "3h": "hashrate3h", "8h": "hashrate8h",
+              "24h": "hashrate24h", "7d": "hashrate7d"}
+    if window not in PEARL_POOLS[pool]["windows"]:
         raise SourceError("Choose a hashrate average in Pearl Settings.")
-    metrics, errors, results = {"averageWindow": window}, [], {}
-    loaders = {"Price": lambda: pearl_price(root), "Hashrate": lambda: pearl_workers(config, root),
-               "7-day average": lambda: pearl_history(config, root),
-               "Pool yield": lambda: pearl_pool(root), "Wallet balance": lambda: pearl_wallet(config, root),
-               "Pool balance": lambda: pearl_balance(config, root), "Payout history": lambda: pearl_payouts(config, root),
-               "Total paid": lambda: pearl_paid(config, root)}
+    metrics, errors, results = {"pool": pool, "averageWindow": window}, [], {}
+    loaders = {"Price": lambda: pearl_price(root),
+               "Hashrate": lambda: (pearl_workers if kryptex else pfpool_hashrate)(config, root),
+               "7-day average": lambda: (pearl_history if kryptex else pfpool_history)(config, root),
+               "Pool yield": lambda: pearl_pool(root) if kryptex else pfpool_yield(config, root),
+               "Wallet balance": lambda: pearl_wallet(config, root),
+               "Pool balance": lambda: (pearl_balance if kryptex else pfpool_balance)(config, root),
+               "Payout history": lambda: (pearl_payouts if kryptex else pfpool_payouts)(config, root)}
+    if kryptex:
+        # Kryptex reports the all-time total separately; PF Pool's payout history includes it.
+        loaders["Total paid"] = lambda: pearl_paid(config, root)
     # Independent requests keep an explorer outage from erasing healthy pool/mining data
     # and bound refresh duration below the app's collector watchdog.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(loaders)) as pool:
-        jobs = {name: pool.submit(loader) for name, loader in loaders.items()}
-        for name, job in jobs.items():
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(loaders)) as executor:
+        jobs = {source: executor.submit(loader) for source, loader in loaders.items()}
+        for source, job in jobs.items():
             try:
-                results[name] = job.result()
+                results[source] = job.result()
             except SourceError as exc:
                 # An unavailable optional average must not flag a healthy shorter selection.
-                if name != "7-day average" or window == "7d":
-                    errors.append(name + ": " + str(exc))
+                if source != "7-day average" or window == "7d":
+                    errors.append(source + ": " + str(exc))
     if price := results.get("Price"):
         metrics.update(priceUSD=price["priceUSD"], priceUpdatedAt=price["updatedAt"])
     workers = dict(results.get("Hashrate", {}))
@@ -1063,15 +1309,17 @@ def fetch_pearl(config, root):
     if workers and metrics.get(fields[window]) is not None:
         metrics["hashrate"] = metrics[fields[window]]
     elif workers and (window != "7d" or "7-day average" in results):
-        errors.append("Kryptex has not reported the selected hashrate average yet.")
-    for name in ("Wallet balance", "Pool balance", "Payout history", "Total paid"):
-        metrics.update(results.get(name, {}))
+        errors.append(name + " has not reported the selected hashrate average yet.")
+    for source in ("Wallet balance", "Pool balance", "Payout history", "Total paid"):
+        metrics.update(results.get(source, {}))
     if metrics.get("hashrate") is not None:
         try:
-            if not supports_pps:
+            if kryptex and not supports_pps:
                 raise SourceError("Profit projections require Kryptex PPS+ workers.")
-            if pool := results.get("Pool yield"):
-                coins, pool_fee = pearl_yield(pool, metrics["hashrate"])
+            if pool_yield := results.get("Pool yield"):
+                if not kryptex and not pool_yield["supportsPPS"]:
+                    raise SourceError("Profit projections require PF Pool's PPS payment mode.")
+                coins, pool_fee = (pearl_yield if kryptex else pfpool_coins)(pool_yield, metrics["hashrate"])
                 metrics.update(coinsPerDay=coins, poolFeePercent=pool_fee)
         except SourceError as exc:
             errors.append(str(exc))
@@ -1509,7 +1757,7 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
         # goes to disk, not the config, URLs, tokens or wallet addresses.
         config_key = hashlib.sha256(json.dumps([config, device_tokens, currency, utilization_days], sort_keys=True).encode()).hexdigest()
         if provider == "pearl":
-            config_key = "kryptex-average-v2:" + config_key
+            config_key = "pearl-pool-v1:" + config_key
         if provider in ("pearl", "power", "kraken") and old.get("configKey") != config_key:
             old = {}
         retry = number(old.get("nextRetryAt")) or 0
@@ -1520,6 +1768,8 @@ def collect(provider, force=False, provided=None, cache_dir=None, currency="USD"
         if now < retry or now - last_attempt < interval:
             return old
         base = {"id": provider, "name": NAMES[provider], "source": SOURCES[provider], "url": LINKS[provider], "checkedAt": now}
+        if provider == "pearl" and (pool := PEARL_POOLS.get(config.get("pool") or "pfpool")):
+            base.update(source=pool["name"] + " · Pearl explorer · CoinGecko", url=pool["url"])
         try:
             loaders = {"codex": lambda: parse_codex(codex_rpc()), "claude": fetch_claude, "cursor": fetch_cursor,
                        "vast": lambda: fetch_vast(provided, utilization_days, old),

@@ -4,6 +4,8 @@ struct PearlMenu: View {
   let provider: Provider
   let options: ProviderPreferences
   let power: PowerContext
+  /// The pool the readings came from, or the configured pool while none have arrived.
+  let pool: PearlPool
   private var money: MoneyFormat { MoneyFormat(currency: options.currency, rates: provider.rates) }
   private var projection: MiningProjection { provider.pearlProjection(options, power: power) }
   /// Nil while stale, so every figure shows a dash instead of an outdated value.
@@ -18,14 +20,10 @@ struct PearlMenu: View {
       MenuSeparator()
       MenuSectionLabel(title: "Mining")
       MenuValueRow(title: "PRL price", value: money.format(pearl?.priceUSD, digits: 3))
-      MenuValueRow(
-        title: "Hashrate 30m · 3h", value: formatHashrates(pearl?.shortHashrate, pearl?.hashrate3h)
-      )
-      .help("Kryptex's accepted-share averages. Choose the average used by the headline and projections in Pearl Settings.")
-      MenuValueRow(
-        title: "Hashrate 24h · 7d", value: formatHashrates(pearl?.hashrate24h, pearl?.hashrate7d)
-      )
-      .help("The 7-day average uses a full week of Kryptex's hashrate history, including recorded downtime. Incomplete or stale history stays unavailable.")
+      hashrateRow(pool.windows[0], pool.windows[1])
+        .help("\(pool.title)'s accepted-share averages. Choose the average used by the headline and projections in Pearl Settings.")
+      hashrateRow(pool.windows[2], pool.windows[3])
+        .help("The 7-day average uses a full week of \(pool.title)'s hashrate history, including recorded downtime. Incomplete or stale history stays unavailable.")
       MenuValueRow(
         title: "Yield", value: pearl?.coinsPerDay.map { String(format: "%.2f PRL/day", $0) } ?? "—"
       )
@@ -69,9 +67,16 @@ struct PearlMenu: View {
     )
   }
 
+  /// Two of the pool's averages on one row, as in "Hashrate 1h · 8h".
+  private func hashrateRow(_ first: PearlAverageWindow, _ second: PearlAverageWindow) -> some View {
+    MenuValueRow(
+      title: "Hashrate \(first.rawValue) · \(second.rawValue)",
+      value: formatHashrates(pearl?.hashrate(for: first), pearl?.hashrate(for: second)))
+  }
+
   private var yieldHelp: String {
     let average = provider.pearl?.effectiveAverageWindow.averageDescription ?? "selected average"
-    var text = "Projected PRL per day from the \(average) and Kryptex's current PPS+ rate"
+    var text = "Projected PRL per day from the \(average) and \(pool.title)'s current \(pool.scheme) rate"
     if let fee = pearl?.poolFeePercent { text += String(format: ", after the %.2g%% pool fee", fee) }
     return text + ". The miner's developer fee is already reflected in the accepted hashrate."
   }
@@ -91,7 +96,7 @@ struct PearlMenu: View {
         detail: worth(pearl?.poolBalance)
       )
       .help(
-        formatPRL(pearl?.poolBalance) + " held by Kryptex: " + formatPRL(pearl?.poolConfirmed)
+        formatPRL(pearl?.poolBalance) + " held by \(pool.title): " + formatPRL(pearl?.poolConfirmed)
           + " confirmed, " + formatPRL(pearl?.poolUnconfirmed) + " still maturing.")
       if let confirmed = pearl?.poolConfirmed, let threshold = pearl?.payoutThreshold,
         threshold > 0
@@ -110,7 +115,7 @@ struct PearlMenu: View {
         .accessibilityElement(children: .combine)
       }
       MenuValueRow(title: "Total paid", value: formatPRL(pearl?.totalPaid, digits: 4))
-        .help("All-time payouts reported by Kryptex: " + formatPRL(pearl?.totalPaid))
+        .help("All-time payouts reported by \(pool.title): " + formatPRL(pearl?.totalPaid))
     }
   }
 
@@ -132,7 +137,7 @@ struct PearlMenu: View {
       MenuSectionLabel(title: "Recent payouts", trailing: payoutCountLabel)
       if let payouts = pearl?.payouts {
         if payouts.isEmpty { menuNote("No payouts yet.") }
-        ForEach(payouts) { PayoutRow(payout: $0) }
+        ForEach(payouts) { PayoutRow(payout: $0, pool: pool) }
       } else {
         menuNote("Payout history unavailable.")
       }
@@ -142,7 +147,10 @@ struct PearlMenu: View {
 
 struct PayoutRow: View {
   let payout: PearlPayout
-  private var failed: Bool { ["Failed", "Rejected", "Cancelled"].contains(payout.status) }
+  let pool: PearlPool
+  private var failed: Bool {
+    ["Failed", "Rejected", "Cancelled", "Needs review"].contains(payout.status)
+  }
 
   var body: some View {
     HStack(spacing: 8) {
@@ -162,7 +170,7 @@ struct PayoutRow: View {
     }
     .font(.system(size: 12)).lineLimit(1)
     .padding(.horizontal, MenuMetrics.inset).padding(.vertical, 3)
-    .help(formatPRL(payout.amount) + " · status reported by Kryptex")
+    .help(formatPRL(payout.amount) + " · status reported by \(pool.title)")
   }
 }
 
