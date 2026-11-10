@@ -1,22 +1,46 @@
 {
   "fill" : {
-    "automatic-gradient" : "extended-srgb:0.14000,0.51000,0.78000,1.00000"
+    "linear-gradient" : [
+      "display-p3:0.10000,0.76000,0.80000,1.00000",
+      "display-p3:0.07000,0.28000,0.84000,1.00000"
+    ]
   },
   "groups" : [
     {
       "layers" : [
         {
-          "image-name" : "glyph.svg",
-          "name" : "Gauge",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [0, 0]
-          }
+          "glass" : true,
+          "image-name" : "mark.svg",
+          "name" : "Mark"
         }
       ],
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "track.svg",
+          "name" : "Track",
+          "opacity" : 0.34
+        },
+        {
+          "glass" : true,
+          "image-name" : "bars.svg",
+          "name" : "Bars",
+          "opacity" : 0.55
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.3
       },
       "translucency" : {
         "enabled" : true,
