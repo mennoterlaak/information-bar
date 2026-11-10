@@ -337,34 +337,48 @@ struct DecimalField: View {
 
 struct GeneralSettings: View {
   @ObservedObject var store: DashboardStore
+  /// Whether any item gives up part of its composition at the moment.
+  private var shortened: Bool {
+    store.preferences.menuCategories.contains {
+      store.preferences.isShortened($0, at: store.menuStep)
+    }
+  }
 
   var body: some View {
     Form {
       Section {
         MenuBarPreview(store: store)
+        Picker(
+          "Layout",
+          selection: Binding(get: { store.preferences.menuLayout }, set: store.setMenuLayout)
+        ) {
+          ForEach(MenuLayout.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Picker(
+          "Shorten items",
+          selection: Binding(get: { store.preferences.shortening }, set: store.setShortening)
+        ) {
+          ForEach(MenuShortening.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        if store.preferences.shortening == .automatic && shortened {
+          Text("Shortened to fit the menu bar of this display.")
+            .font(.callout).foregroundStyle(.secondary)
+        }
       } header: {
         sectionHeader(
           "Menu bar",
           info:
-            "Hold ⌘ and drag items in the menu bar to reorder them. Each item's contents are composed on its own pane."
+            "One group keeps the items together, in the order of the list below. Separate items are placed one by one by macOS, which can put other apps' items between them. Hold ⌘ and drag to move the group or an item.\n\nShortened items drop extra values first, then labels, then everything but the icon, starting with the last item. When space is short follows the display in use, such as the room beside a MacBook's notch."
         )
       }
-      Section("Menu bar items") {
-        ForEach(ProviderCategory.allCases) { category in
-          Toggle(
-            isOn: Binding(
-              get: { store.preferences.provider(category).enabled },
-              set: { value in store.update(category) { $0.enabled = value } })
-          ) {
-            HStack(spacing: 10) {
-              IconTile(id: category.rawValue, size: 26, theme: store.iconTheme)
-              VStack(alignment: .leading, spacing: 1) {
-                Text(category.name)
-                Text(category.subtitle).font(.caption).foregroundStyle(.secondary)
-              }
-            }
-          }
+      Section {
+        ForEach(store.preferences.orderedCategories) { category in
+          MenuOrderRow(store: store, category: category)
         }
+      } header: {
+        sectionHeader(
+          "Menu bar items",
+          info: "Drag rows to set the order in the menu bar. The switch shows or hides an item.")
       }
       Section {
         Picker(
@@ -407,19 +421,29 @@ struct GeneralSettings: View {
 
 struct MenuBarPreview: View {
   @ObservedObject var store: DashboardStore
+  /// One provider's complete composition; nil previews the menu bar as it is drawn.
   var category: ProviderCategory?
   private var categories: [ProviderCategory] {
-    category.map { [$0] }
-      ?? ProviderCategory.allCases.filter { store.preferences.provider($0).enabled }
+    category.map { [$0] } ?? store.preferences.menuCategories
+  }
+  /// The arrangements to try, widest first. The whole menu bar starts from the one in use;
+  /// a provider's own pane starts from its complete composition.
+  private var arrangements: [[MenuItemForm]] {
+    guard let category else {
+      let ladder = store.preferences.menuLadder
+      return Array(ladder.dropFirst(min(store.menuStep, ladder.count - 1)))
+    }
+    return MenuBarFit.ladder(valueCounts: [store.preferences.provider(category).valueCount])
   }
   var body: some View {
     HStack(spacing: 4) {
       Image(systemName: "apple.logo").font(.system(size: 13)).foregroundStyle(.tertiary)
       Spacer(minLength: 10)
-      // Like the real menu bar, items that do not fit are hidden from the left.
+      // A preview narrower than the menu bar shortens the items the way the menu bar would.
+      let arrangements = arrangements
       ViewThatFits(in: .horizontal) {
-        ForEach(0..<max(1, categories.count), id: \.self) { hidden in
-          items(Array(categories.dropFirst(hidden)))
+        ForEach(Array(arrangements.enumerated()), id: \.offset) { _, forms in
+          items(forms)
         }
       }
     }.padding(.horizontal, 14).frame(height: 38)
@@ -427,20 +451,61 @@ struct MenuBarPreview: View {
       .accessibilityLabel("Menu bar preview")
   }
 
-  private func items(_ shown: [ProviderCategory]) -> some View {
-    HStack(spacing: 4) {
-      ForEach(shown) { item in
-        let option = store.preferences.provider(item)
-        MenuBarItemView(
-          provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue),
-          options: option, power: store.powerContext
-        ).opacity(option.enabled ? 1 : 0.35)
-      }
+  private func items(_ forms: [MenuItemForm]) -> some View {
+    let segments = zip(categories, forms).map { item, form in
+      MenuBarSegment(
+        category: item, provider: store.providers[item.rawValue] ?? .placeholder(item.rawValue),
+        options: store.preferences.provider(item).shortened(to: form))
+    }
+    return HStack(spacing: 4) {
+      MenuBarStripView(segments: segments, power: store.powerContext)
+        .opacity(category.map { store.preferences.provider($0).enabled } ?? true ? 1 : 0.35)
       if categories.isEmpty {
         Image(systemName: "gearshape").help(
           "A settings icon stays in the menu bar while every item is hidden.")
       }
       Image(systemName: "switch.2").foregroundStyle(.tertiary)
+    }
+  }
+}
+
+/// One provider in the menu bar order: drag to reorder, switch to show or hide.
+struct MenuOrderRow: View {
+  @ObservedObject var store: DashboardStore
+  let category: ProviderCategory
+  @State private var targeted = false
+
+  var body: some View {
+    Toggle(
+      isOn: Binding(
+        get: { store.preferences.provider(category).enabled },
+        set: { value in store.update(category) { $0.enabled = value } })
+    ) {
+      HStack(spacing: 10) {
+        Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
+          .help("Drag to reorder")
+        IconTile(id: category.rawValue, size: 26, theme: store.iconTheme)
+        VStack(alignment: .leading, spacing: 1) {
+          Text(category.name)
+          Text(category.subtitle).font(.caption).foregroundStyle(.secondary)
+        }
+      }
+    }
+    .padding(.horizontal, 6).padding(.vertical, 2)
+    .background(
+      targeted ? Color.accentColor.opacity(0.12) : Color.clear,
+      in: RoundedRectangle(cornerRadius: 6)
+    )
+    .contentShape(Rectangle())
+    .draggable(category.rawValue)
+    .dropDestination(for: String.self) { dropped, _ in
+      guard let dragged = dropped.first.flatMap(ProviderCategory.init(rawValue:)) else {
+        return false
+      }
+      store.move(dragged, to: category)
+      return true
+    } isTargeted: {
+      targeted = $0
     }
   }
 }
@@ -582,6 +647,12 @@ struct CategorySettings: View {
       }
       Section {
         MenuBarPreview(store: store, category: category)
+        if options.enabled && store.preferences.isShortened(category, at: store.menuStep) {
+          Text(
+            "Shortened in the menu bar while space is short. General sets when items are shortened."
+          )
+          .font(.callout).foregroundStyle(.secondary)
+        }
         ForEach(options.elements) { element in
           MenuElementRow(
             store: store, category: category, element: element, windows: provider.windows ?? [],

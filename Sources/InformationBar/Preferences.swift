@@ -49,6 +49,32 @@ enum AppTheme: String, CaseIterable, Codable {
   var title: String { rawValue.capitalized }
 }
 
+/// How the app's items sit in the menu bar.
+enum MenuLayout: String, CaseIterable, Codable {
+  /// One status item holding every provider, in the order set in Settings.
+  case grouped
+  /// One status item per provider; macOS places each of them.
+  case separate
+  var title: String {
+    switch self {
+    case .grouped: return "One group"
+    case .separate: return "Separate items"
+    }
+  }
+}
+
+/// When items give up detail to save menu bar room.
+enum MenuShortening: String, CaseIterable, Codable {
+  case automatic, always, never
+  var title: String {
+    switch self {
+    case .automatic: return "When space is short"
+    case .always: return "Always"
+    case .never: return "Never"
+    }
+  }
+}
+
 /// Window for the machine utilization ring in the Vast.ai dropdown.
 enum UtilizationPeriod: String, CaseIterable, Codable {
   case day, week, month
@@ -308,9 +334,14 @@ struct AppPreferences: Codable, Equatable {
   var gaugeStyle = GaugeStyle.ring
   var pearl = PearlPreferences()
   var power = PowerPreferences()
+  /// Provider ids in menu bar order, left to right. Providers missing here follow in their
+  /// default order, so a provider added by an update lands at the end.
+  var order: [String] = []
+  var menuLayout = MenuLayout.grouped
+  var shortening = MenuShortening.automatic
 
   enum CodingKeys: String, CodingKey {
-    case providers, theme, refreshInterval, gaugeStyle, pearl, power
+    case providers, theme, refreshInterval, gaugeStyle, pearl, power, order, menuLayout, shortening
   }
   private enum LegacyKeys: String, CodingKey { case ringValuesInside }
 
@@ -322,6 +353,9 @@ struct AppPreferences: Codable, Equatable {
       try values.decodeIfPresent([String: ProviderPreferences].self, forKey: .providers) ?? [:]
     theme = try values.decodeIfPresent(AppTheme.self, forKey: .theme) ?? .system
     refreshInterval = try values.decodeIfPresent(Int.self, forKey: .refreshInterval) ?? 60
+    order = try values.decodeIfPresent([String].self, forKey: .order) ?? []
+    menuLayout = try values.decodeIfPresent(MenuLayout.self, forKey: .menuLayout) ?? .grouped
+    shortening = try values.decodeIfPresent(MenuShortening.self, forKey: .shortening) ?? .automatic
     pearl = try values.decodeIfPresent(PearlPreferences.self, forKey: .pearl) ?? .init()
     if let saved = try values.decodeIfPresent(PowerPreferences.self, forKey: .power) {
       power = saved
@@ -347,6 +381,27 @@ struct AppPreferences: Codable, Equatable {
 
   func provider(_ category: ProviderCategory) -> ProviderPreferences {
     providers[category.rawValue] ?? .defaults(for: category)
+  }
+
+  /// Every provider in menu bar order: the saved order first, the rest as declared.
+  var orderedCategories: [ProviderCategory] {
+    var seen = Set<ProviderCategory>()
+    let saved = order.compactMap(ProviderCategory.init(rawValue:)).filter {
+      seen.insert($0).inserted
+    }
+    return saved + ProviderCategory.allCases.filter { !seen.contains($0) }
+  }
+
+  /// The providers shown in the menu bar, left to right.
+  var menuCategories: [ProviderCategory] { orderedCategories.filter { provider($0).enabled } }
+
+  /// Puts `category` in the place of `target`; the providers between them shift to make room.
+  mutating func move(_ category: ProviderCategory, to target: ProviderCategory) {
+    var all = orderedCategories
+    guard let from = all.firstIndex(of: category), let to = all.firstIndex(of: target), from != to
+    else { return }
+    all.insert(all.remove(at: from), at: to)
+    order = all.map(\.rawValue)
   }
 
   static func load(from defaults: UserDefaults) -> Self {

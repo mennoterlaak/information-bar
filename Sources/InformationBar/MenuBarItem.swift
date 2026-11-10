@@ -1,6 +1,56 @@
 import SwiftUI
 
-/// The composed content of one status item; the Settings preview renders the same view.
+enum MenuBarMetrics {
+  /// Distance between the contents of two providers in one status item. Each provider's cell
+  /// takes half of it on either side, which is also the room its highlight needs.
+  static let gap: CGFloat = 12
+  /// macOS pads every status item by 8pt per side and clips what is drawn beyond that. The
+  /// outer half gaps are drawn into that padding, so the group sits as close to its
+  /// neighbours as a single item would.
+  static let overflow: CGFloat = 7
+  /// Corner radius of the highlight behind the provider whose dropdown is open.
+  static let highlightRadius: CGFloat = 6
+}
+
+/// One provider inside a status item.
+struct MenuBarSegment: Identifiable {
+  let category: ProviderCategory
+  let provider: Provider
+  /// Preferences whose elements are already trimmed to the form in use.
+  let options: ProviderPreferences
+  /// Measured width of the content, so the status item knows where each provider is. Nil
+  /// lets the content take its natural width, as in the Settings preview.
+  var width: CGFloat? = nil
+  var id: ProviderCategory { category }
+}
+
+/// The providers of one status item side by side; the Settings preview renders the same view.
+struct MenuBarStripView: View {
+  let segments: [MenuBarSegment]
+  var power = PowerContext.empty
+  /// The provider whose dropdown is open.
+  var active: ProviderCategory? = nil
+
+  var body: some View {
+    HStack(spacing: 0) {
+      ForEach(segments) { segment in
+        MenuBarItemView(provider: segment.provider, options: segment.options, power: power)
+          .frame(width: segment.width)
+          .padding(.horizontal, MenuBarMetrics.gap / 2)
+          .frame(maxHeight: .infinity)
+          .background {
+            if active == segment.category {
+              RoundedRectangle(cornerRadius: MenuBarMetrics.highlightRadius, style: .continuous)
+                .fill(.primary.opacity(0.14)).padding(.horizontal, 1)
+            }
+          }
+      }
+    }
+    .fixedSize(horizontal: true, vertical: false)
+  }
+}
+
+/// The composed content of one provider; the Settings preview renders the same view.
 struct MenuBarItemView: View {
   let provider: Provider
   let options: ProviderPreferences
@@ -19,8 +69,8 @@ struct MenuBarItemView: View {
   @ViewBuilder private func elementView(_ element: MenuElement) -> some View {
     switch element.kind {
     case .icon:
-      // A little extra room between the icon and whatever follows it.
-      ProviderIcon(id: provider.id, size: 16).padding(.trailing, 4)
+      // The icon sits closer to its own value than to the next provider.
+      ProviderIcon(id: provider.id, size: 16).padding(.trailing, 1)
     case .ring:
       let percent =
         provider.id == "vast"
