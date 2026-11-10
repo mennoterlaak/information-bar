@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <!-- The bars either side of the "i", which make it the middle column of a chart. -->
+  <rect x="202" y="574" width="152" height="268" rx="76" fill="#FFFFFF"/>
+  <rect x="670" y="378" width="152" height="464" rx="76" fill="#FFFFFF"/>
+</svg>

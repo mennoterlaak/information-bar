@@ -61,6 +61,15 @@ enum AppInfo {
   static let version =
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
 
+  /// The value after a launch flag, as in `--panel claude`.
+  static func argument(_ name: String) -> String? {
+    let arguments = CommandLine.arguments
+    guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else {
+      return nil
+    }
+    return arguments[index + 1]
+  }
+
   /// A bundled resource, or the checkout's copy when running unbundled (swift run, the QA
   /// renderer). The checkout is located by walking up from the executable to the directory
   /// that holds Package.swift, so no source path is compiled into the binary.
@@ -158,6 +167,9 @@ final class DashboardStore: ObservableObject {
   @Published private(set) var preferences: AppPreferences
   @Published var selectedSettings = "global"
   @Published var tick = Date()
+  /// How far the menu bar items are shortened: the step of `preferences.menuLadder` in use.
+  /// Set by the menu bar; the Settings preview starts from the same arrangement.
+  @Published var menuStep = 0
   /// Synthetic data only: no collector runs, no Keychain reads.
   var demo = false
   /// Current system icon style, published so tiles redraw the moment it changes.
@@ -315,6 +327,22 @@ final class DashboardStore: ObservableObject {
     persistPreferences()
   }
 
+  func setMenuLayout(_ value: MenuLayout) {
+    preferences.menuLayout = value
+    persistPreferences()
+  }
+
+  func setShortening(_ value: MenuShortening) {
+    preferences.shortening = value
+    persistPreferences()
+  }
+
+  /// Puts `category` in the menu bar place of `target`.
+  func move(_ category: ProviderCategory, to target: ProviderCategory) {
+    preferences.move(category, to: target)
+    persistPreferences()
+  }
+
   func setRefreshInterval(_ value: Int) {
     preferences.refreshInterval = value == 120 ? 120 : 60
     Freshness.refreshInterval = preferences.refreshInterval
@@ -332,6 +360,7 @@ final class DashboardStore: ObservableObject {
   func start() {
     keyConnected = demo
     krakenConnected = demo
+    loadCachedReadings()
     refresh()
     timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
       Task { @MainActor in
@@ -483,11 +512,32 @@ final class DashboardStore: ObservableObject {
     invalidate("kraken")
   }
 
+  /// The collector's sanitized cache file for a provider.
+  private func cacheURL(_ id: String) -> URL {
+    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+      "Library/Application Support/Information Bar/Cache/\(id).json")
+  }
+
+  /// Shows the collector's last results at launch, so the menu bar starts with its values
+  /// instead of filling in provider by provider. Readings past their freshness limit still
+  /// show a dash until the first refresh, as they do while the app runs.
+  private func loadCachedReadings() {
+    guard !demo else { return }
+    for category in ProviderCategory.allCases where preferences.provider(category).enabled {
+      let id = category.rawValue
+      guard let data = try? Data(contentsOf: cacheURL(id)),
+        let provider = try? JSONDecoder().decode(Provider.self, from: data), provider.id == id
+      else { continue }
+      if category == .kraken {
+        krakenBase = provider
+      }
+      providers[id] = provider
+    }
+  }
+
   /// Only this app's sanitized cache for the provider, after its credential changed.
   private func removeCache(_ id: String) {
-    let cache = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
-      "Library/Application Support/Information Bar/Cache/\(id).json")
-    try? FileManager.default.removeItem(at: cache)
+    try? FileManager.default.removeItem(at: cacheURL(id))
   }
 
   func setLaunchAtLogin(_ enabled: Bool) {

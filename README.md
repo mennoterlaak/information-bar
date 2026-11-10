@@ -16,6 +16,8 @@ Menu bar usage for ChatGPT, Claude and Cursor, Vast.ai rentals, Pearl mining, yo
 - Kraken: spot balances with each asset's last Kraken trade price, today's change and value, plus the portfolio total in USD or EUR. Staked and Earn balances count toward their asset. Open margin positions are listed with side, leverage, size, entry price and unrealized P&L; their P&L counts toward the total and today's change, and the dropdown shows equity, used and free margin, margin level and estimated rollover fees. Portfolio value, today's change, the price of any held asset, margin P&L and margin level are available as menu bar items. Optional live prices follow trades through Kraken's public feed between balance refreshes.
 - Power: independent electricity tariff, HomeWizard device discovery (v1 and v2), measured draw and projected costs. Assign meters to Pearl or Vast.ai, or monitor a whole-house meter separately. Existing Vast.ai tariffs migrate automatically.
 - Menu bar items you compose yourself per provider: icon, values, rings and a 7-day graph, as in iStat Menus.
+- One group in the menu bar, in the order you set, so other apps' icons never end up between the items. Separate items that macOS places one by one remain an option.
+- Items that fit the display in use. Beside the notch of a MacBook display, or wherever the menu bar runs out of room, items are shortened instead of hidden: extra values go first, then labels, then everything but the icon, starting with the last item. If even the icons do not fit, the last items leave the menu bar until there is room.
 
 ## Install
 
@@ -32,6 +34,12 @@ bash scripts/install-app.sh   # builds, installs in /Applications and opens the 
 ```
 
 `bash scripts/build-app.sh` builds `dist/Information Bar.app` without installing. The build is ad-hoc signed for local use.
+
+## Menu bar
+
+Under **Settings → General**, drag the rows of **Menu bar items** to set their order and use the switches to show or hide them. **Layout** chooses between one group and separate items; hold ⌘ and drag to move the group, or a separate item, along the menu bar. **Shorten items** is *When space is short* by default; *Always* keeps every item to its icon and first value, and *Never* leaves the items as composed, which lets macOS hide what does not fit.
+
+Click an item for its dropdown; the left and right arrow keys move to the next one. Right-click an item to refresh it, open its settings or quit.
 
 ## How it works
 
@@ -60,7 +68,7 @@ bash scripts/render-views.sh                # light and dark renders of every vi
 bash scripts/screenshots.sh                 # README screenshots from the app in demo mode
 ```
 
-`--demo` runs the app on synthetic data; `--settings` and `--panel <provider>` open a window at launch. Providers include `pearl`, `kraken` and `power`.
+`--demo` runs the app on synthetic data; `--settings` and `--panel <provider>` open a window at launch. Providers include `pearl`, `kraken` and `power`. `--notch <points>` fits the menu bar items as on a display with that many points right of its notch (about 660 on a 14-inch MacBook Pro, 770 on a 16-inch), `--layout separate` and `--shorten always` set those options for a demo run, and `--exit-after <seconds>` prints the arrangement in use and quits.
 
 ## License
 

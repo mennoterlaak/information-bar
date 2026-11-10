@@ -60,6 +60,25 @@ struct RenderViews {
         }
       }
       store.setGaugeStyle(.ring)
+      // The menu bar group in every arrangement it shortens to, from complete to icons only,
+      // with Claude's dropdown open.
+      let shown = store.preferences.menuCategories
+      try save(
+        VStack(alignment: .trailing, spacing: 6) {
+          ForEach(Array(store.preferences.menuLadder.enumerated()), id: \.offset) { _, forms in
+            MenuBarStripView(
+              segments: zip(shown, forms).filter { !$0.1.hidden }.map { category, form in
+                MenuBarSegment(
+                  category: category,
+                  provider: store.providers[category.rawValue] ?? .placeholder(category.rawValue),
+                  options: store.preferences.provider(category).shortened(to: form))
+              }, power: store.powerContext, active: .claude
+            ).frame(height: 22)
+          }
+        }
+        .padding(12).background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, scheme),
+        to: output.appendingPathComponent("menu-bar-\(label).png"))
       // Every icon style value macOS writes, as the tiles draw it in this appearance.
       let themes = [
         "Regular", "RegularDark", "RegularAutomatic", "ClearLight", "ClearDark",

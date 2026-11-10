@@ -3,8 +3,8 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 # Single source of truth for the version: Settings and the collector read it from the bundle.
-version="1.1.0"
-build="9"
+version="1.2.0"
+build="10"
 swift build -c release
 binary_dir="$(swift build -c release --show-bin-path)"
 app_dir="$project_dir/dist/Information Bar.app"
@@ -26,12 +26,17 @@ cp assets/providers/LICENSE-*.txt "$app_dir/Contents/Resources/Providers/"
 # App icon: an Icon Composer package compiled by the asset compiler, so macOS renders the
 # Default, Dark, Clear and Tinted styles itself. Produces Assets.car and an .icns fallback.
 icon_build="$(mktemp -d)"
-xcrun actool --output-format human-readable-text --warnings --errors \
+# A failed compile must stop the build; otherwise a rebuilt bundle keeps its previous icon.
+if ! icon_log="$(xcrun actool --output-format human-readable-text --warnings --errors \
   --output-partial-info-plist "$icon_build/icon.plist" \
   --app-icon AppIcon --include-all-app-icons --enable-on-demand-resources NO \
   --development-region en --target-device mac --minimum-deployment-target 27.0 \
-  --platform macosx --compile "$app_dir/Contents/Resources" assets/app-icon/AppIcon.icon \
-  | grep -vE '^/\*|^$|Assets\.car$|AppIcon\.icns$|icon\.plist$' || true
+  --platform macosx --compile "$app_dir/Contents/Resources" assets/app-icon/AppIcon.icon 2>&1)"
+then
+  printf '%s\n' "$icon_log" >&2
+  exit 1
+fi
+printf '%s\n' "$icon_log" | grep -vE '^/\*|^$|Assets\.car$|AppIcon\.icns$|icon\.plist$' || true
 rm -rf "$icon_build"
 cat > "$app_dir/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
